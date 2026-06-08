@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: fund-monitor-cbk5
+    runtime: python
+    plan: free
+    buildCommand: python -m py_compile server.py
+    startCommand: python server.py
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: ALLOW_CTF_PREFIX
+        value: "0"
+      - key: ACTIVATION_CODES
+        sync: false

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.git/
+.DS_Store
+*.zip
+work/*.headers.txt
+work/*.pretty.json
+work/health.json
+work/index.html
