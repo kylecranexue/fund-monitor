@@ -9,7 +9,3 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
-      - key: ALLOW_CTF_PREFIX
-        value: "0"
-      - key: ACTIVATION_CODES
-        sync: false

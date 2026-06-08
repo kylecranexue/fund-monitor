@@ -11,14 +11,12 @@ import urllib.request
 
 
 BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:8787").rstrip("/")
-SMOKE_CODE = os.environ.get("SMOKE_CODE", "LOCAL-DEMO")
 
 
 def request_json(
     path: str,
     *,
     method: str = "GET",
-    token: str = "",
     body: dict | None = None,
     expect_status: int = 200,
 ) -> dict:
@@ -27,8 +25,6 @@ def request_json(
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(BASE_URL + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -45,40 +41,15 @@ def main() -> int:
     try:
         health = request_json("/api/health")
         assert health["status"] == "ok"
+        assert health["access"] == "open"
 
-        missing_auth = request_json("/api/me", expect_status=401)
-        assert missing_auth["error"] == "activation_required"
-
-        invalid_auth = request_json("/api/me", token="__invalid__", expect_status=401)
-        assert invalid_auth["error"] == "invalid_token"
-
-        missing_code = request_json("/api/redeem", method="POST", body={}, expect_status=400)
-        assert missing_code["error"] == "missing_code"
-
-        invalid_code = request_json(
-            "/api/redeem",
-            method="POST",
-            body={"activation_code": "__NAVI100_PROBE_INVALID__"},
-            expect_status=401,
-        )
-        assert invalid_code["error"] == "invalid_code"
-
-        redeem = request_json(
-            "/api/redeem",
-            method="POST",
-            body={"activation_code": SMOKE_CODE},
-        )
-        assert redeem["success"] is True
-        token = redeem["token"]
-
-        me = request_json("/api/me", token=token)
+        me = request_json("/api/me")
         assert me["success"] is True
-        assert me["code"] == SMOKE_CODE
+        assert me["access"] == "open"
 
         calc = request_json(
             "/api/calculate",
             method="POST",
-            token=token,
             body={
                 "investable_cash": 200000,
                 "ndx_holdings": 80000,
@@ -102,9 +73,7 @@ def main() -> int:
         return 1
 
     print("health ok")
-    print("auth errors ok")
-    print("redeem ok")
-    print("me ok")
+    print("open access ok")
     print(f"calculate ok: {calc['plan']['deploy_label']} {calc['plan']['total']}")
     print(f"funds ok: {funds['count']} filtered records")
     return 0

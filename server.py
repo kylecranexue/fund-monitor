@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Local Navi100-compatible backend for the CTF replica.
+"""Local Navi100-compatible backend for the open-access replica.
 
-This server intentionally implements a local activation/session flow instead of
-attempting to recover production secrets. It serves the captured frontend and a
-compatible API surface so the challenge UI can be exercised end to end.
+It serves the captured frontend and a compatible API surface so the UI can be
+exercised end to end without an activation gate.
 """
 
 from __future__ import annotations
@@ -11,8 +10,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
-import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,11 +20,6 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 PUBLIC_DIR = ROOT / "public"
 FUNDS_FILE = ROOT / "work" / "funds.json"
-
-TOKEN_TTL = timedelta(days=7)
-TOKENS: dict[str, dict[str, object]] = {}
-OBSERVED_ACTIVATION_CODE_COUNT = 50
-OBSERVED_ACTIVATION_STORE = "env"
 
 MARKET_SNAPSHOT = {
     "market_date": "2026-06-05",
@@ -46,15 +39,6 @@ def now_utc() -> datetime:
 
 def observed_fetch_time() -> str:
     return now_utc().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def activation_codes() -> set[str]:
-    raw = os.environ.get("ACTIVATION_CODES", "LOCAL-DEMO,NAVI-LOCAL,NAVI100-CTF,CTF-UNLOCK")
-    return {item.strip() for item in raw.split(",") if item.strip()}
-
-
-def allow_ctf_prefix() -> bool:
-    return os.environ.get("ALLOW_CTF_PREFIX", "1").lower() in {"1", "true", "yes", "on"}
 
 
 def json_bytes(payload: object) -> bytes:
@@ -311,43 +295,13 @@ class NaviHandler(BaseHTTPRequestHandler):
             return None
         return payload if isinstance(payload, dict) else None
 
-    def bearer_token(self) -> str:
-        auth = self.headers.get("Authorization", "")
-        if auth.lower().startswith("bearer "):
-            return auth[7:].strip()
-        return ""
-
-    def token_record(self, token: str) -> dict[str, object] | None:
-        if not token:
-            return None
-        record = TOKENS.get(token)
-        if not record:
-            return None
-        expires_at = record.get("expires_at")
-        if isinstance(expires_at, datetime) and expires_at < now_utc():
-            TOKENS.pop(token, None)
-            return None
-        return record
-
-    def require_auth(self) -> dict[str, object] | None:
-        token = self.bearer_token()
-        if not token:
-            self.send_json({"success": False, "error": "activation_required"}, HTTPStatus.UNAUTHORIZED)
-            return None
-        record = self.token_record(token)
-        if record is None:
-            self.send_json({"success": False, "error": "invalid_token"}, HTTPStatus.UNAUTHORIZED)
-        return record
-
     def handle_api_get(self, path: str, query: dict[str, list[str]]) -> None:
         if path == "/api/health":
             self.send_json(
                 {
                     "status": "ok",
                     "data_ok": True,
-                    "activation_code_count": OBSERVED_ACTIVATION_CODE_COUNT,
-                    "activation_store": OBSERVED_ACTIVATION_STORE,
-                    "token_ttl_days": TOKEN_TTL.days,
+                    "access": "open",
                     "market_date": MARKET_SNAPSHOT["market_date"],
                     "fetch_time": observed_fetch_time(),
                 }
@@ -355,15 +309,7 @@ class NaviHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/me":
-            record = self.require_auth()
-            if record is not None:
-                self.send_json(
-                    {
-                        "success": True,
-                        "code": record["code"],
-                        "expires_at": record["expires_at"].isoformat(),
-                    }
-                )
+            self.send_json({"success": True, "access": "open"})
             return
 
         if path == "/api/funds":
@@ -385,25 +331,10 @@ class NaviHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/redeem":
-            code = str(body.get("activation_code") or "").strip()
-            if not code:
-                self.send_json({"success": False, "error": "missing_code"}, HTTPStatus.BAD_REQUEST)
-                return
-            if code not in activation_codes() and not (allow_ctf_prefix() and code.upper().startswith("CTF-")):
-                self.send_json({"success": False, "error": "invalid_code"}, HTTPStatus.UNAUTHORIZED)
-                return
-            token = "local-" + secrets.token_urlsafe(24)
-            TOKENS[token] = {
-                "code": code,
-                "issued_at": now_utc(),
-                "expires_at": now_utc() + TOKEN_TTL,
-            }
-            self.send_json({"success": True, "token": token, "code": code})
+            self.send_json({"success": True, "access": "open"})
             return
 
         if path == "/api/calculate":
-            if self.require_auth() is None:
-                return
             self.send_json(calculate_strategy(body))
             return
 
@@ -456,7 +387,7 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8787"))
     server = ThreadingHTTPServer((host, port), NaviHandler)
     print(f"Navi100 local replica: http://{host}:{port}")
-    print("Activation codes: LOCAL-DEMO, NAVI-LOCAL, NAVI100-CTF, CTF-UNLOCK")
+    print("Access mode: open")
     server.serve_forever()
 
 

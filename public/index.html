@@ -176,16 +176,6 @@
     .toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 20px;border-radius:10px;font-weight:800;font-size:13px;z-index:1000;opacity:0;transition:opacity .3s;pointer-events:none}
     .toast.show{opacity:1}
     .toast.error{background:var(--red)}
-    .auth-overlay{position:fixed;inset:0;background:rgba(16,23,35,.56);z-index:1001;display:none;align-items:center;justify-content:center;padding:20px}
-    .auth-overlay.active{display:flex}
-    .auth-card{width:min(420px,100%);background:var(--paper);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);padding:24px}
-    .auth-card h2{margin:0 0 8px;font-size:24px;font-weight:950}
-    .auth-card p{margin:0 0 16px;font-size:14px;line-height:1.6;color:#5b6470}
-    .auth-card input{width:100%;height:46px;border-radius:12px;border:1px solid var(--line);background:#fbfbfb;padding:0 14px;font-size:15px;font-weight:800;outline:none}
-    .auth-card input:focus{border-color:var(--yellow);box-shadow:0 0 0 3px rgba(255,216,87,.22);background:#fff}
-    .auth-actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
-    .auth-actions .btn{padding:0 16px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
-    .auth-note{margin-top:12px;font-size:12px;color:#8a919c;font-weight:700;line-height:1.5}
     @media (max-width:900px){
       body{padding:12px}.app{grid-template-columns:1fr}.sidebar{position:static;height:auto}.hero-row,.lower-row{grid-template-columns:1fr}.market-strip{grid-template-columns:repeat(2,1fr)}
     }
@@ -202,19 +192,6 @@
 <body>
   <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div></div>
   <div class="toast" id="toast"></div>
-  <div class="auth-overlay" id="authOverlay">
-    <div class="auth-card">
-      <h2>输入激活码</h2>
-      <p>请输入激活码解锁使用。没有激活码，可以先购买。</p>
-      <input id="activationCodeInput" type="text" placeholder="请输入你的激活码" autocomplete="off" />
-      <div class="auth-actions">
-        <button class="btn btn-primary" id="redeemButton">立即激活</button>
-        
-        <a class="btn btn-secondary" href="https://m.tb.cn/h.R87X8Pg?tk=suqegYGmX2Z" target="_blank" rel="noopener noreferrer">没有激活码？去购买</a>
-        
-      </div>
-    </div>
-  </div>
 
   <div class="app">
     <aside class="card sidebar">
@@ -273,11 +250,6 @@
       <div class="topbar">
         <span class="topbar-disclaimer">仅作定投纪律参考，不构成投资建议</span>
         <div class="top-actions">
-          <span class="pill status-pill" id="authStatusPill">未激活</span>
-          <button class="pill status-pill" id="logoutButton" type="button">退出激活</button>
-          
-          <a class="pill" href="https://m.tb.cn/h.R87X8Pg?tk=suqegYGmX2Z" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">前往购买</a>
-          
           <span class="pill" id="marketDatePill">加载中...</span>
           <span class="pill" id="tempPill">--</span>
         </div>
@@ -477,36 +449,12 @@
     const $ = (id) => document.getElementById(id);
     const fmt = (n) => "¥" + Math.round(Number(n || 0)).toLocaleString("zh-CN");
     const fmtPct = (n, d) => (Number(n || 0)).toFixed(d || 1) + "%";
-    const TOKEN_KEY = "navi_access_token";
     const CALCULATE_TIMEOUT_MS = 12000;
-    const PURCHASE_URL = "https://m.tb.cn/h.R87X8Pg?tk=suqegYGmX2Z";
     let selectedBaseRate = 1.5;
 
     function val(id) {
       const el = $(id);
       return el ? Number(el.value || 0) : 0;
-    }
-
-    function getToken() {
-      return localStorage.getItem(TOKEN_KEY) || "";
-    }
-
-    function setToken(token) {
-      if (token) {
-        localStorage.setItem(TOKEN_KEY, token);
-      } else {
-        localStorage.removeItem(TOKEN_KEY);
-      }
-    }
-
-    function setAuthOverlay(show, note) {
-      $("authOverlay").className = "auth-overlay" + (show ? " active" : "");
-    }
-
-    function setAuthUi(authenticated, code) {
-      $("authStatusPill").className = "pill status-pill" + (authenticated ? " active" : "");
-      $("logoutButton").className = "pill status-pill" + (authenticated ? " active" : "");
-      $("authStatusPill").textContent = authenticated ? `已激活 ${code}` : "未激活";
     }
 
     function showToast(msg, err) {
@@ -516,22 +464,8 @@
       setTimeout(() => { t.className = "toast"; }, 3000);
     }
 
-    function redeemErrorMessage(errorCode) {
-      if (errorCode === "missing_code") return "请输入激活码";
-      if (errorCode === "code_already_used") return "这个邀请码已经被使用了";
-      if (errorCode === "invalid_code") return "邀请码无效，请检查后重试";
-      return "激活失败，请稍后重试";
-    }
-
     function setLoading(on) {
       $("loadingOverlay").className = "loading-overlay" + (on ? " active" : "");
-    }
-
-    function authHeaders(extra) {
-      const headers = { ...(extra || {}) };
-      const token = getToken();
-      if (token) headers.Authorization = `Bearer ${token}`;
-      return headers;
     }
 
     function syncBaseRateUi() {
@@ -554,69 +488,6 @@
       if (num > 0) return "state";
       if (num < 0) return "state green";
       return "state neutral";
-    }
-
-    async function redeemCode() {
-      const code = $("activationCodeInput").value.trim();
-      if (!code) {
-        showToast("请输入激活码", true);
-        return;
-      }
-      setLoading(true);
-      try {
-        const resp = await fetch("/api/redeem", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ activation_code: code }),
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) throw new Error(data.error || "redeem_failed");
-        setToken(data.token);
-        setAuthUi(true, data.code);
-        setAuthOverlay(false, "");
-        $("activationCodeInput").value = "";
-        showToast("激活成功");
-        localFallback("已激活，请点击刷新策略");
-      } catch (err) {
-        console.error(err);
-        showToast(redeemErrorMessage(err.message), true);
-        if (err.message === "code_already_used" && PURCHASE_URL) {
-          setAuthOverlay(true, "这个邀请码已经被使用。你可以购买新的邀请码后再试。");
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    async function verifySession() {
-      const token = getToken();
-      if (!token) {
-        setAuthUi(false, "");
-        setAuthOverlay(true, "");
-        return false;
-      }
-      try {
-        const resp = await fetch("/api/me", { headers: authHeaders() });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) throw new Error(data.error || "auth_failed");
-        setAuthUi(true, data.code);
-        setAuthOverlay(false, "");
-        localFallback("已激活，请点击刷新策略");
-        return true;
-      } catch (err) {
-        console.error(err);
-        setToken("");
-        setAuthUi(false, "");
-        setAuthOverlay(true, "激活状态已失效，请重新输入激活码。");
-        return false;
-      }
-    }
-
-    function logout() {
-      setToken("");
-      setAuthUi(false, "");
-      setAuthOverlay(true, "你已退出当前浏览器的激活状态。");
-      localFallback("等待激活后再获取策略");
     }
 
     function tempBadgeClass(t) {
@@ -646,7 +517,7 @@
       const pos = total > 0 ? (invested / total) * 100 : 0;
 
       $("heroEyebrow").textContent = "未获取策略";
-      $("heroTitle").textContent = reason || "请输入激活码后获取实时策略";
+      $("heroTitle").textContent = reason || "点击刷新策略获取今日建议";
       $("tempBadge").textContent = "--";
       $("tempBadge").className = "hero-temp-badge";
       $("recAmountMain").innerHTML = "<span>¥</span>--";
@@ -658,10 +529,10 @@
       $("positionRatio").textContent = fmtPct(pos);
       $("holdingSplitText").textContent = invested > 0 ? `纳指 ${Math.round((ndx / invested) * 100)}% / 标普 ${Math.round((sp / invested) * 100)}%` : "暂无持仓";
       $("rateDisplay").textContent = "--";
-      $("deployRateText").textContent = "等待激活";
+      $("deployRateText").textContent = "待刷新";
       $("deployPercentText").textContent = fmtPct(pos);
       $("whyAmount").textContent = "--";
-      $("marketDatePill").textContent = "等待激活";
+      $("marketDatePill").textContent = "待刷新";
       $("tempPill").textContent = "--";
       $("tempLabel").textContent = "--";
       $("formulaBase").textContent = "¥--";
@@ -669,7 +540,7 @@
       $("formulaResult").textContent = "¥--";
       $("formulaExplain").textContent = "--";
       $("judgmentText").textContent = reason || "--";
-      $("reasonsList").innerHTML = '<div class="reason-item"><div class="reason-num">-</div><div class="reason-text">等待激活后获取策略。</div></div>';
+      $("reasonsList").innerHTML = '<div class="reason-item"><div class="reason-num">-</div><div class="reason-text">点击刷新策略即可获取今日建议。</div></div>';
       $("indicatorCards").innerHTML = "";
       $("targetConfigText").textContent = `纳指 ${val("inputNasdaqTarget")}% / 标普 ${val("inputSPTarget")}%`;
       $("targetNdxLabel").textContent = val("inputNasdaqTarget") + "%";
@@ -716,19 +587,11 @@
       try {
         const resp = await fetch("/api/calculate", {
           method: "POST",
-          headers: authHeaders({ "Content-Type": "application/json" }),
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
           signal: controller.signal,
         });
         const data = await resp.json();
-        if (resp.status === 401) {
-          setToken("");
-          setAuthUi(false, "");
-          setAuthOverlay(true, "激活状态已失效，请重新输入激活码。");
-          localFallback("激活状态已失效，请重新输入激活码。");
-          showToast("登录已失效", true);
-          return;
-        }
         if (!resp.ok || !data.success) throw new Error(data.error || "api_error");
         render(data);
         showToast("策略已刷新");
@@ -1038,8 +901,6 @@
     }
 
     $("confirmInputs").addEventListener("click", fetchStrategy);
-    $("redeemButton").addEventListener("click", redeemCode);
-    $("logoutButton").addEventListener("click", logout);
     document.querySelectorAll(".deploy-rate-option").forEach((btn) => {
       btn.addEventListener("click", () => {
         selectedBaseRate = Number(btn.dataset.baseRate || 1.5);
@@ -1077,14 +938,10 @@
         });
       });
     });
-    $("activationCodeInput").addEventListener("keydown", (event) => {
-      if (event.key === "Enter") redeemCode();
-    });
-
     syncBaseRateUi();
-    localFallback("等待激活后再获取策略");
+    localFallback("点击刷新策略即可获取今日建议");
     loadFundMini(false);
-    verifySession();
+    fetchStrategy();
   </script>
 </body>
 </html>
