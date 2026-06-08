@@ -1,0 +1,9 @@
+{
+  "name": "fund-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "python3 -m py_compile server.py",
+    "start": "python3 server.py"
+  }
+}
