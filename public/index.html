@@ -14,6 +14,7 @@
     *{box-sizing:border-box}
     body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f9f7f1 0,#f4f6f8 100%);color:var(--ink);font-family:var(--font);padding:18px}
     .app{max-width:1440px;margin:0 auto;display:grid;grid-template-columns:280px minmax(0,1fr);gap:18px}
+    .app > *,main,.card{min-width:0}
     .card{background:var(--paper);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow)}
     .sidebar{padding:20px 16px;position:sticky;top:18px;height:calc(100vh - 36px);overflow:auto}
     .brand{display:flex;align-items:center;gap:12px;padding:4px 6px 18px}
@@ -21,15 +22,15 @@
     .brand h1{margin:0;font-size:22px}
     .brand p{margin:4px 0 0;color:var(--muted);font-size:12px;font-weight:700}
     .input-panel{display:flex;flex-direction:column;gap:12px}
-    .input-group{display:flex;flex-direction:column;gap:5px}
+    .input-group{display:flex;flex-direction:column;gap:5px;min-width:0}
     .input-row{display:flex;gap:8px}
     .input-row .input-group{flex:1}
     .input-group label{font-size:12px;color:#56606c;font-weight:850}
-    .input-group input{height:44px;border-radius:12px;border:1px solid var(--line);background:#fbfbfb;padding:0 12px;font-size:15px;font-weight:850;outline:none}
+    .input-group input{width:100%;min-width:0;height:44px;border-radius:12px;border:1px solid var(--line);background:#fbfbfb;padding:0 12px;font-size:15px;font-weight:850;outline:none}
     .input-group input:focus{border-color:var(--yellow);box-shadow:0 0 0 3px rgba(255,216,87,.22);background:#fff}
-    .deploy-rate-section{margin-top:6px;margin-bottom:4px}
+    .deploy-rate-section{min-width:0;margin-top:6px;margin-bottom:4px}
     .deploy-rate-label{display:block;margin-bottom:10px;font-size:14px;font-weight:800;color:#4b5563}
-    .deploy-rate-options{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+    .deploy-rate-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-width:0}
     .deploy-rate-option{border:1px solid #e5e7eb;border-radius:14px;background:#ffffff;padding:11px 4px 10px;cursor:pointer;font-family:inherit;transition:all .18s ease}
     .deploy-rate-option:hover{border-color:#f5c842;background:#fffbeb}
     .deploy-rate-option.active{border-color:#f5c842;background:#ffd84d;box-shadow:0 8px 18px rgba(245,200,66,.25)}
@@ -148,7 +149,7 @@
     .mini-segment{display:flex;gap:2px;padding:2px;border:1px solid #e8eaee;border-radius:999px;background:#fafafa}
     .mini-filter-btn{height:28px;padding:0 10px;border:0;border-radius:999px;background:transparent;color:#66707c;font-size:12px;font-weight:900;cursor:pointer}
     .mini-filter-btn.active{background:#111;color:#fff}
-    .fund-mini-table-wrap{overflow:auto}
+    .fund-mini-table-wrap{width:100%;max-width:100%;overflow:auto;-webkit-overflow-scrolling:touch}
     .fund-mini-table{width:100%;min-width:900px;border-collapse:collapse}
     .fund-mini-table th{position:sticky;top:0;z-index:2;padding:9px 8px;border-bottom:1px solid var(--line);background:#f7f7f5;text-align:left;font-size:11px;color:#66707c;font-weight:900;white-space:nowrap}
     .fund-mini-table th.sortable{cursor:pointer;user-select:none}
@@ -181,10 +182,19 @@
     .toast.show{opacity:1}
     .toast.error{background:var(--red)}
     @media (max-width:900px){
-      body{padding:12px}.app{grid-template-columns:1fr}.sidebar{position:static;height:auto}.hero-row,.lower-row{grid-template-columns:1fr}.market-strip{grid-template-columns:repeat(2,1fr)}
+      body{padding:12px}.app{grid-template-columns:minmax(0,1fr);gap:14px}.sidebar{position:static;height:auto}.hero-row,.lower-row{grid-template-columns:minmax(0,1fr);gap:14px}.market-strip{grid-template-columns:repeat(2,minmax(0,1fr))}
     }
     @media (max-width:560px){
-      .market-strip,.indicator-cards,.status-grid{grid-template-columns:1fr}.hero-amount{font-size:44px}.hero-btns{align-items:flex-start}.temp-scale{margin-left:0}.donut-wrap{flex-direction:column;align-items:flex-start}
+      body{padding:10px}.card{border-radius:16px}.sidebar{padding:14px}.brand{padding:0 2px 12px}.brand h1{font-size:20px}.brand p{font-size:11px}.logo{width:40px;height:40px;border-radius:12px}
+      .input-panel{display:grid;grid-template-columns:1fr 1fr;gap:9px}.input-panel>.input-group:first-child{grid-column:1/-1}.input-group{gap:4px}.input-group label{font-size:11px}.input-group input{height:40px;font-size:14px}.input-row{display:contents}.sidebar .confirm-btn{width:100%;margin-top:14px}
+      .deploy-rate-section{grid-column:1/-1;margin:0}.deploy-rate-label{margin-bottom:7px;font-size:12px}.deploy-rate-option{padding:8px 4px}.deploy-rate-name{font-size:13px}.deploy-rate-value{font-size:11px}.deploy-rate-desc{margin-top:7px}
+      .sidebar .calc-note{display:none}
+      .topbar{flex-direction:column;align-items:flex-start;gap:8px}.top-actions{width:100%;gap:6px}.pill{height:auto;min-height:32px;padding:7px 10px;white-space:normal}
+      .hero-card,.status-card,.explain-card,.alloc-card{padding:18px 16px}.hero-top{flex-direction:column;gap:8px}.hero-title{font-size:19px;margin-bottom:12px}.hero-amount-row{gap:14px}.hero-amount{font-size:42px;letter-spacing:0}.hero-amount span{font-size:20px}.hero-split{width:100%;justify-content:space-between}.hero-btns{margin-top:12px}
+      .market-strip,.indicator-cards,.status-grid{grid-template-columns:1fr}.strip-item{min-height:auto;border-right:0;border-bottom:1px solid var(--line)}.strip-item:last-child{border-bottom:0}.strip-item .num{font-size:23px}
+      .hero-btns{align-items:flex-start}.temp-scale{margin-left:0}.donut-wrap{flex-direction:column;align-items:flex-start}.donut{width:132px;height:132px}.donut::after{width:88px;height:88px}
+      .formula-line{padding:12px;gap:7px}.f-base{font-size:18px}.f-result{font-size:22px}.section-title h2{font-size:18px}
+      .fund-mini{padding:16px 14px}.fund-mini-title{font-size:19px}.fund-mini-table{min-width:820px}.fund-mini-table th,.fund-mini-table td{padding:8px 7px}
       .fund-mini-head{flex-direction:column;align-items:flex-start}
       .fund-mini-controls{align-items:flex-start}
       .fund-mini-groups{width:100%;gap:12px}
