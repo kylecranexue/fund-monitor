@@ -475,8 +475,13 @@
     const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8787" : "";
     const CALCULATE_TIMEOUT_MS = 25000;
     const AUTO_REFRESH_MS = 15 * 60 * 1000;
+    const FORM_STORAGE_KEY = "navi100.local.inputs.v1";
+    const FUND_CACHE_PREFIX = "navi100.local.funds.v1:";
+    const FUND_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+    const INPUT_IDS = ["inputCash", "inputNasdaq", "inputSP", "inputNasdaqTarget", "inputSPTarget"];
     let selectedBaseRate = 1.5;
     let strategyInFlight = false;
+    let saveInputsTimer = null;
 
     function val(id) {
       const el = $(id);
@@ -516,6 +521,50 @@
         btn.classList.toggle("active", Number(btn.dataset.baseRate) === selectedBaseRate);
       });
       $("baseRateText").textContent = selectedBaseRate.toFixed(1).replace(".0", "") + "%";
+    }
+
+    function readJsonStorage(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+      } catch (error) {
+        console.warn("localStorage read failed", error);
+        return null;
+      }
+    }
+
+    function writeJsonStorage(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch (error) {
+        console.warn("localStorage write failed", error);
+      }
+    }
+
+    function loadSavedInputs() {
+      const saved = readJsonStorage(FORM_STORAGE_KEY);
+      if (!saved || typeof saved !== "object") return;
+      INPUT_IDS.forEach((id) => {
+        const el = $(id);
+        if (!el || saved[id] == null || saved[id] === "") return;
+        el.value = saved[id];
+      });
+      const savedRate = Number(saved.selectedBaseRate);
+      if ([1, 1.5, 2].includes(savedRate)) selectedBaseRate = savedRate;
+    }
+
+    function saveInputsNow() {
+      const payload = { selectedBaseRate, updatedAt: new Date().toISOString() };
+      INPUT_IDS.forEach((id) => {
+        const el = $(id);
+        if (el) payload[id] = el.value;
+      });
+      writeJsonStorage(FORM_STORAGE_KEY, payload);
+    }
+
+    function scheduleSaveInputs() {
+      clearTimeout(saveInputsTimer);
+      saveInputsTimer = setTimeout(saveInputsNow, 250);
     }
 
     function signedPct(value) {
@@ -632,6 +681,7 @@
         base_rate_pct: selectedBaseRate,
         refresh: Boolean(opts.forceRefresh),
       };
+      saveInputsNow();
 
       if (!opts.silent) setLoading(true);
       const controller = new AbortController();
@@ -936,7 +986,10 @@
       const el = $("fundMiniCaption");
       if (!el) return;
       const fetchedAt = payload && (payload.dynamic_fetched_at || payload.fetched_at || payload.static_fetched_at);
-      const sourceMode = payload && String(payload.source_mode || "").startsWith("live_direct") ? "联网实时刷新" : "快照回退";
+      let sourceMode = "快照回退";
+      if (payload && payload.fromLocalCache) sourceMode = "本机缓存";
+      else if (payload && String(payload.source_mode || "").startsWith("live_direct")) sourceMode = "联网实时刷新";
+      else if (payload && payload.refreshing) sourceMode = "快照回退 · 后台刷新中";
       el.textContent = `${sourceMode}${fetchedAt ? " · 更新 " + fetchedAt : ""}。公开数据可能存在延迟、缺失或误差；不构成基金推荐，请以官方披露和交易平台为准。`;
     }
 
@@ -981,8 +1034,45 @@
       }
     }
 
+    function fundCacheKey() {
+      const trade = fundMiniState.tradeMode || "all";
+      const family = fundMiniState.family || "all";
+      return FUND_CACHE_PREFIX + trade + ":" + family;
+    }
+
+    function loadCachedFundMini() {
+      const cached = readJsonStorage(fundCacheKey());
+      if (!cached || !Array.isArray(cached.records)) return false;
+      const age = Date.now() - Number(cached.savedAt || 0);
+      if (!Number.isFinite(age) || age > FUND_CACHE_MAX_AGE_MS) return false;
+      fundMiniState.records = cached.records;
+      renderFundMini(fundMiniState.records, {
+        ...(cached.payload || {}),
+        fromLocalCache: true,
+      });
+      return true;
+    }
+
+    function saveFundMiniCache(payload) {
+      if (!payload || !Array.isArray(payload.records)) return;
+      writeJsonStorage(fundCacheKey(), {
+        savedAt: Date.now(),
+        records: payload.records,
+        payload: {
+          dynamic_fetched_at: payload.dynamic_fetched_at,
+          fetched_at: payload.fetched_at,
+          static_fetched_at: payload.static_fetched_at,
+          source_mode: payload.source_mode,
+          cache: payload.cache,
+        },
+      });
+    }
+
     async function loadFundMini(forceRefresh) {
-      $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">正在加载基金池...</td></tr>';
+      const hadCachedRows = !forceRefresh && loadCachedFundMini();
+      if (!hadCachedRows) {
+        $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">正在加载基金池...</td></tr>';
+      }
       try {
         const params = new URLSearchParams();
         params.set("primary_category", "all");
@@ -994,17 +1084,22 @@
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || "fund_mini_failed");
         fundMiniState.records = payload.records || [];
+        saveFundMiniCache(payload);
         renderFundMini(fundMiniState.records, payload);
       } catch (error) {
         console.error(error);
-        $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">基金池加载失败，请稍后再试。</td></tr>';
+        if (!hadCachedRows) {
+          $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">基金池加载失败，请稍后再试。</td></tr>';
+        } else {
+          updateFundMiniCaption({ fromLocalCache: true, fetched_at: "接口暂不可用，已保留本机缓存" });
+        }
       }
     }
 
     async function autoRefresh() {
       if (document.hidden) return;
       await fetchStrategy({ silent: true, forceRefresh: true });
-      await loadFundMini(true);
+      await loadFundMini(false);
     }
 
     function startAutoRefresh() {
@@ -1016,10 +1111,17 @@
     }
 
     $("confirmInputs").addEventListener("click", () => fetchStrategy({ forceRefresh: true }));
+    INPUT_IDS.forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener("input", scheduleSaveInputs);
+      el.addEventListener("change", saveInputsNow);
+    });
     document.querySelectorAll(".deploy-rate-option").forEach((btn) => {
       btn.addEventListener("click", () => {
         selectedBaseRate = Number(btn.dataset.baseRate || 1.5);
         syncBaseRateUi();
+        saveInputsNow();
       });
     });
     document.querySelectorAll("#miniTradeFilters .mini-filter-btn").forEach((btn) => {
@@ -1053,9 +1155,11 @@
         });
       });
     });
+    loadSavedInputs();
     syncBaseRateUi();
     localFallback("正在获取今日建议...");
-    fetchStrategy().finally(() => loadFundMini(false));
+    fetchStrategy();
+    loadFundMini(false);
     startAutoRefresh();
   </script>
 </body>

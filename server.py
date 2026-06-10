@@ -13,6 +13,7 @@ import mimetypes
 import os
 import re
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -40,6 +41,8 @@ CN_TZ = timezone(timedelta(hours=8))
 SSL_CONTEXT = ssl._create_unverified_context()
 FUNDS_CACHE: dict[str, object] = {"expires_at": 0.0, "payload": None}
 MARKET_CACHE: dict[str, object] = {"expires_at": 0.0, "payload": None}
+FUNDS_REFRESH_LOCK = threading.Lock()
+FUNDS_REFRESH_IN_PROGRESS = False
 SINA_HEADERS = {
     **HTTP_HEADERS,
     "Accept": "*/*",
@@ -141,6 +144,11 @@ def cache_set(cache: dict[str, object], payload: dict[str, object], ttl: int) ->
     cache["payload"] = payload
     cache["expires_at"] = time.time() + ttl
     return payload
+
+
+def cache_payload(cache: dict[str, object]) -> dict[str, object] | None:
+    payload = cache.get("payload")
+    return dict(payload) if isinstance(payload, dict) else None
 
 
 def load_funds_payload() -> dict[str, object]:
@@ -379,12 +387,47 @@ def refresh_funds_payload(base_payload: dict[str, object]) -> dict[str, object]:
     return payload
 
 
-def load_live_funds_payload(*, force_refresh: bool = False) -> dict[str, object]:
+def refresh_funds_cache_background() -> None:
+    global FUNDS_REFRESH_IN_PROGRESS
+    try:
+        payload = refresh_funds_payload(load_funds_payload())
+        cache_set(FUNDS_CACHE, payload, FUNDS_CACHE_TTL)
+    except Exception as exc:
+        stale = cache_payload(FUNDS_CACHE) or load_funds_payload()
+        stale["source_mode"] = stale.get("source_mode") or "local_snapshot"
+        stale["errors"] = list(stale.get("errors") or []) + [f"background_funds_refresh: {exc}"]
+        cache_set(FUNDS_CACHE, stale, min(FUNDS_CACHE_TTL, 300))
+    finally:
+        with FUNDS_REFRESH_LOCK:
+            FUNDS_REFRESH_IN_PROGRESS = False
+
+
+def schedule_funds_refresh() -> bool:
+    global FUNDS_REFRESH_IN_PROGRESS
+    with FUNDS_REFRESH_LOCK:
+        if FUNDS_REFRESH_IN_PROGRESS:
+            return False
+        FUNDS_REFRESH_IN_PROGRESS = True
+    thread = threading.Thread(target=refresh_funds_cache_background, name="funds-refresh", daemon=True)
+    thread.start()
+    return True
+
+
+def load_live_funds_payload(*, force_refresh: bool = False, prefer_fast: bool = True) -> dict[str, object]:
     cached = None if force_refresh else cache_get(FUNDS_CACHE)
     if cached is not None:
         payload = dict(cached)
         payload["cache"] = "memory"
         payload["success"] = True
+        return payload
+
+    if prefer_fast and not force_refresh:
+        stale_payload = cache_payload(FUNDS_CACHE)
+        payload = stale_payload or load_funds_payload()
+        payload["success"] = True
+        payload["cache"] = "memory_stale" if stale_payload else "local_snapshot"
+        payload["source_mode"] = payload.get("source_mode") or "local_snapshot"
+        payload["refreshing"] = schedule_funds_refresh()
         return payload
 
     payload = load_funds_payload()
