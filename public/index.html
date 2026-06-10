@@ -38,6 +38,9 @@
     .deploy-rate-option.active .deploy-rate-value{color:#374151}
     .deploy-rate-desc{margin-top:9px;font-size:12px;font-weight:600;color:#6b7280}
     .deploy-rate-desc strong{color:#111827}
+    .calc-note{margin:8px 0 0;color:#8a93a1;font-size:11px;line-height:1.55;font-weight:650}
+    .market-note{margin:-6px 0 12px}
+    .auto-status{color:#66707c}
     .confirm-btn,.btn{height:44px;border:0;border-radius:12px;font-size:15px;font-weight:950;cursor:pointer}
     .confirm-btn,.btn-primary{background:var(--yellow);color:#111}
     .btn-secondary{background:#f1f3f5;color:#111;border:1px solid var(--line)}
@@ -86,11 +89,12 @@
     .progress-top{display:flex;justify-content:space-between;color:#6f7884;font-size:12px;font-weight:850;margin-bottom:6px}
     .progress{height:8px;border-radius:99px;background:#eaedf0;overflow:hidden}
     .progress span{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--yellow));border-radius:99px}
-    .market-strip{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow);margin-bottom:20px}
+    .market-strip{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow);margin-bottom:20px}
     .strip-item{padding:16px;border-right:1px solid var(--line);min-height:124px}
     .strip-item:last-child{border-right:0}
     .strip-item h3{margin:0 0 6px;font-size:14px;font-weight:950}
     .strip-item .num{font-size:25px;font-weight:950;margin-bottom:10px}
+    .strip-date{margin-top:7px;color:var(--muted);font-size:10px;line-height:1.35;font-weight:750}
     .mini-line{width:88px;height:20px;display:block;margin-bottom:6px}
     .state{display:inline-block;background:var(--red);color:#fff;padding:6px 12px;border-radius:4px;font-size:13px;font-weight:950}
     .state.green{background:var(--green)}
@@ -241,6 +245,7 @@
           <div class="deploy-rate-desc">
             当前默认部署率：<strong id="baseRateText">1.5%</strong>
           </div>
+          <div class="calc-note">买入强度就是默认部署率，会参与公式：可投现金 × 买入强度 × 市场温度系数 × 仓位系数。</div>
         </div>
       </div>
       <button class="confirm-btn" id="confirmInputs">刷新策略</button>
@@ -250,6 +255,7 @@
       <div class="topbar">
         <span class="topbar-disclaimer">仅作定投纪律参考，不构成投资建议</span>
         <div class="top-actions">
+          <span class="pill auto-status" id="autoRefreshPill">自动刷新：启动中</span>
           <span class="pill" id="marketDatePill">加载中...</span>
           <span class="pill" id="tempPill">--</span>
         </div>
@@ -281,6 +287,7 @@
             </div>
           </div>
           <p class="hero-reason" id="reasonText">正在获取最新市场数据...</p>
+          <p class="calc-note">今日建议金额先由市场温度和仓位控制总投入，再按纳指/标普目标配置缺口拆分。</p>
           <div class="hero-btns">
             <div class="temp-scale">
               <span>市场温度</span>
@@ -314,6 +321,7 @@
               <div class="sub" id="rateExplain">--</div>
             </div>
           </div>
+          <p class="calc-note">今日部署率 = 默认部署率 × 市场温度系数 × 仓位系数；当前仓位越高，仓位系数越低。</p>
           <div class="progress-wrap">
             <div class="progress-top"><span>仓位进度</span><span id="deployPercentText">--</span></div>
             <div class="progress"><span id="deployBar"></span></div>
@@ -325,22 +333,32 @@
         <h2>市场温度</h2>
         <a id="dataSourceLink">数据源：Yahoo / Nasdaq / Cboe / FRED</a>
       </div>
+      <p class="calc-note market-note">市场温度评分按纳指100 PE估值分位、VIX波动、短中期趋势、10年美债利率加权计算；PE不可用时才回退到指数点位分位。每次手动刷新或自动刷新都会重新联网取数。</p>
       <section class="market-strip">
         <div class="strip-item">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 14 C14 4,22 9,32 5 C46 0,55 8,68 5 C82 4,90 14,96 10" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>纳指100</h3><div class="num" id="ndxPrice">--</div><span class="state" id="ndxChange">--</span>
+          <div class="strip-date" id="ndxDate">--</div>
         </div>
         <div class="strip-item">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 17 C15 8,25 2,38 8 C52 1,62 8,74 6 C86 5,90 12,96 13" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>标普500</h3><div class="num" id="spxPrice">--</div><span class="state" id="spxChange">--</span>
+          <div class="strip-date" id="spxDate">--</div>
+        </div>
+        <div class="strip-item">
+          <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 16 C10 10,20 13,30 7 C44 1,55 4,66 10 C78 17,88 8,96 11" stroke="#0d7bc7" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
+          <h3>纳指100 PE</h3><div class="num" id="ndxPe">--</div><span class="state neutral" id="ndxPeState">--</span>
+          <div class="strip-date" id="ndxPeDate">--</div>
         </div>
         <div class="strip-item">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 12 C14 6,28 4,40 10 C54 15,62 10,72 16 C84 20,90 14,96 16" stroke="#0c8a70" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>VIX</h3><div class="num" id="vixPrice">--</div><span class="state green" id="vixChange">--</span>
+          <div class="strip-date" id="vixDate">--</div>
         </div>
         <div class="strip-item">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 15 C16 6,30 4,44 7 C60 9,70 14,82 12 C90 11,94 15,96 16" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>美债10Y</h3><div class="num" id="us10yPrice">--</div><span class="state" id="us10yState">--</span>
+          <div class="strip-date" id="us10yDate">--</div>
         </div>
       </section>
 
@@ -352,12 +370,15 @@
               <span class="f-base" id="formulaBase">¥--</span>
               <span class="f-op">×</span>
               <span class="f-op" id="formulaCoefLabel">--</span>
+              <span class="f-op">×</span>
+              <span class="f-op" id="formulaPositionCoefLabel">--</span>
               <span class="f-op">=</span>
               <span class="f-result" id="formulaResult">¥--</span>
             </div>
             <div class="formula-sub">
               <span>基准日投：按可投资现金 × 默认部署率（1.5%）估算</span>
               <span>温度系数：<span class="formula-inline-note" id="formulaExplain">--</span></span>
+              <span>仓位系数：仓位越接近满仓，自动降低今日部署率</span>
             </div>
           </div>
           <div class="judgment-row">
@@ -385,6 +406,7 @@
             <div class="target-config-row" id="targetNdxRow"><span>纳指目标</span><b id="targetNdxLabel">--</b></div>
             <div class="target-config-row" id="targetSpRow"><span>标普目标</span><b id="targetSpLabel">--</b></div>
           </div>
+          <p class="calc-note">组合配置按你的持仓和现金实时计算；纳指/标普买入金额优先补足距离目标配置更远的一侧。</p>
         </section>
       </div>
 
@@ -392,7 +414,8 @@
         <div class="fund-mini-head">
           <div>
             <h2 class="fund-mini-title">纳指 / 标普可投基金</h2>
-            <p class="fund-mini-caption">仅展示公开数据，可能存在延迟、缺失或误差；不构成基金推荐，请以官方披露和交易平台为准。</p>
+            <p class="fund-mini-caption" id="fundMiniCaption">仅展示公开数据，可能存在延迟、缺失或误差；不构成基金推荐，请以官方披露和交易平台为准。</p>
+            <p class="calc-note">场内日涨跌取交易所最新成交价涨跌；场外日涨跌取东方财富基金实时估算。场内溢价率 = 最新成交价相对 IOPV（缺失时用净值）的偏离；费率 = 管理费 + 托管费 + 销售服务费。</p>
           </div>
         </div>
 
@@ -449,8 +472,11 @@
     const $ = (id) => document.getElementById(id);
     const fmt = (n) => "¥" + Math.round(Number(n || 0)).toLocaleString("zh-CN");
     const fmtPct = (n, d) => (Number(n || 0)).toFixed(d || 1) + "%";
-    const CALCULATE_TIMEOUT_MS = 12000;
+    const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8787" : "";
+    const CALCULATE_TIMEOUT_MS = 25000;
+    const AUTO_REFRESH_MS = 15 * 60 * 1000;
     let selectedBaseRate = 1.5;
+    let strategyInFlight = false;
 
     function val(id) {
       const el = $(id);
@@ -466,6 +492,23 @@
 
     function setLoading(on) {
       $("loadingOverlay").className = "loading-overlay" + (on ? " active" : "");
+    }
+
+    function fmtClock(date) {
+      return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function fmtDataDate(value, prefix) {
+      if (!value) return "--";
+      const text = String(value).slice(0, 16);
+      return (prefix || "日期") + "：" + text;
+    }
+
+    function setAutoRefreshStatus(text, isError) {
+      const el = $("autoRefreshPill");
+      if (!el) return;
+      el.textContent = text;
+      el.style.color = isError ? "var(--red)" : "#66707c";
     }
 
     function syncBaseRateUi() {
@@ -537,6 +580,7 @@
       $("tempLabel").textContent = "--";
       $("formulaBase").textContent = "¥--";
       $("formulaCoefLabel").textContent = "--";
+      $("formulaPositionCoefLabel").textContent = "--";
       $("formulaResult").textContent = "¥--";
       $("formulaExplain").textContent = "--";
       $("judgmentText").textContent = reason || "--";
@@ -553,12 +597,16 @@
       $("spxPrice").textContent = "--";
       $("vixPrice").textContent = "--";
       $("us10yPrice").textContent = "--";
+      $("ndxPe").textContent = "--";
       $("ndxChange").textContent = "--";
       $("spxChange").textContent = "--";
       $("ndxChange").className = "state neutral";
       $("spxChange").className = "state neutral";
       $("vixChange").textContent = "--";
       $("us10yState").textContent = "--";
+      $("ndxPeState").textContent = "--";
+      $("ndxPeState").className = "state neutral";
+      ["ndxDate", "spxDate", "ndxPeDate", "vixDate", "us10yDate"].forEach((id) => { $(id).textContent = "--"; });
       $("baseRateText").textContent = selectedBaseRate.toFixed(1).replace(".0", "") + "%";
       const bar = $("deployBar");
       if (bar) bar.style.width = fmtPct(pos);
@@ -571,7 +619,10 @@
       }
     }
 
-    async function fetchStrategy() {
+    async function fetchStrategy(options) {
+      const opts = options || {};
+      if (strategyInFlight) return;
+      strategyInFlight = true;
       const body = {
         investable_cash: val("inputCash"),
         ndx_holdings: val("inputNasdaq"),
@@ -579,13 +630,14 @@
         target_ndx_pct: val("inputNasdaqTarget"),
         target_spx_pct: val("inputSPTarget"),
         base_rate_pct: selectedBaseRate,
+        refresh: Boolean(opts.forceRefresh),
       };
 
-      setLoading(true);
+      if (!opts.silent) setLoading(true);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), CALCULATE_TIMEOUT_MS);
       try {
-        const resp = await fetch("/api/calculate", {
+        const resp = await fetch(`${API_BASE}/api/calculate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -594,10 +646,13 @@
         const data = await resp.json();
         if (!resp.ok || !data.success) throw new Error(data.error || "api_error");
         render(data);
-        showToast("策略已刷新");
+        setAutoRefreshStatus("自动刷新：" + fmtClock(new Date()), false);
+        if (!opts.silent) showToast("策略已刷新");
       } catch (err) {
         console.error(err);
-        if (err.name === "AbortError") {
+        if (opts.silent) {
+          setAutoRefreshStatus("自动刷新失败，保留上次数据", true);
+        } else if (err.name === "AbortError") {
           localFallback("请求超时，请手动点击刷新策略重试。");
           showToast("请求超时，请稍后重试", true);
         } else {
@@ -606,7 +661,8 @@
         }
       } finally {
         clearTimeout(timeoutId);
-        setLoading(false);
+        strategyInFlight = false;
+        if (!opts.silent) setLoading(false);
       }
     }
 
@@ -623,6 +679,13 @@
 
       $("marketDatePill").textContent = "数据截至美股 " + (d.market_date || (d.fetch_time ? d.fetch_time.slice(0, 10) : "--")) + " 收盘";
       $("tempPill").textContent = "市场温度: " + temp;
+      const sources = m.data_sources || {};
+      const hasSourceErrors = Array.isArray(m.errors) && m.errors.length > 0;
+      $("dataSourceLink").textContent = hasSourceErrors
+        ? "数据源：部分实时源失败，已使用缓存/快照回退"
+        : sources.index_quotes
+        ? "数据源：" + [sources.index_quotes, sources.nasdaq_pe, sources.vix, sources.us10y].filter(Boolean).join(" / ")
+        : "数据源：实时行情 + 本地回退";
 
       const heroes = {
         "极冷": "市场恐慌，分批加速买入",
@@ -645,13 +708,16 @@
 
       const ndxC = m.ndx_close ? m.ndx_close.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "--";
       const spxC = m.spx_close ? m.spx_close.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "--";
-      $("reasonText").innerHTML = `纳指100报 <b>${ndxC}</b>，标普500报 <b>${spxC}</b>。市场综合评分 <b>${(m.composite || 0).toFixed(1)}/10</b>（${temp}），今日部署率 <b>${ratePct}%</b>。`;
+      const peText = m.nasdaq_pe ? `，纳指100 PE <b>${Number(m.nasdaq_pe).toFixed(2)}</b>` : "";
+      $("reasonText").innerHTML = `纳指100报 <b>${ndxC}</b>，标普500报 <b>${spxC}</b>${peText}。市场综合评分 <b>${(m.composite || 0).toFixed(1)}/10</b>（${temp}），今日部署率 <b>${ratePct}%</b>。`;
 
       $("whyAmount").textContent = fmt(plan.total || 0);
       $("formulaBase").textContent = fmt(expl.base_amount || 0);
       $("formulaCoefLabel").textContent = String(expl.temperature_coefficient || 0);
+      const positionCoef = expl.position_coefficient == null ? 1 : Number(expl.position_coefficient);
+      $("formulaPositionCoefLabel").textContent = Number.isFinite(positionCoef) ? positionCoef.toFixed(2) : "--";
       $("formulaResult").textContent = fmt(plan.total || 0);
-      document.querySelector(".formula-sub span").textContent = `基准日投：按可投资现金 × 默认部署率（${baseRatePct}%）估算`;
+      document.querySelector(".formula-sub span").textContent = `公式：今日金额 = 可投资现金 × 默认部署率（${baseRatePct}%）× 温度系数 × 仓位系数`;
 
       let tempExplain = "市场中性，按正常节奏部署";
       if (temp === "偏热" || temp === "过热") tempExplain = `市场${temp}，降低投入强度`;
@@ -710,15 +776,26 @@
       $("spxPrice").textContent = m.spx_close ? m.spx_close.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "--";
       $("vixPrice").textContent = m.vix_close ? m.vix_close.toFixed(2) : "--";
       $("us10yPrice").textContent = m.us10y ? m.us10y.toFixed(3) + "%" : "--";
+      $("ndxPe").textContent = m.nasdaq_pe ? Number(m.nasdaq_pe).toFixed(2) : "--";
       $("ndxChange").className = stateClassForChange(ndxChangePct);
       $("spxChange").className = stateClassForChange(spxChangePct);
       $("ndxChange").textContent = signedPct(ndxChangePct);
       $("spxChange").textContent = signedPct(spxChangePct);
+      $("ndxDate").textContent = fmtDataDate(m.ndx_date, "行情");
+      $("spxDate").textContent = fmtDataDate(m.spx_date, "行情");
+      $("ndxPeDate").textContent = m.nasdaq_pe
+        ? `${m.nasdaq_pe_date || "--"} · 近5年${Math.round(Number(m.nasdaq_pe_percentile || 0) * 100)}%分位`
+        : "PE源暂不可用";
       $("vixChange").className = "state" + (m.vix_close && m.vix_close < 20 ? " green" : "");
       $("vixChange").textContent = m.vix_close ? (m.vix_close < 15 ? "低波动" : m.vix_close < 20 ? "正常" : m.vix_close < 28 ? "偏高" : "恐慌") : "--";
+      $("vixDate").textContent = fmtDataDate(m.vix_date, "收盘");
       const y = m.us10y;
       $("us10yState").className = "state" + (y && y <= 3.5 ? " green" : "");
       $("us10yState").textContent = y ? (y >= 4.5 ? "偏高" : y <= 3.5 ? "偏低" : "中性") : "--";
+      $("us10yDate").textContent = fmtDataDate(m.us10y_date, "行情");
+      const pePct = Number(m.nasdaq_pe_percentile || 0);
+      $("ndxPeState").className = "state" + (!m.nasdaq_pe ? " neutral" : pePct <= 0.35 ? " green" : pePct < 0.75 ? " neutral" : "");
+      $("ndxPeState").textContent = m.nasdaq_pe ? (m.nasdaq_pe_label || (pePct <= 0.35 ? "偏低" : pePct < 0.75 ? "合理" : "偏高")) : "--";
       $("baseRateText").textContent = baseRatePct.replace(".0", "") + "%";
     }
 
@@ -740,6 +817,11 @@
     function fmtMiniValue(value, digits) {
       if (value == null || Number.isNaN(Number(value))) return "--";
       return Number(value).toFixed(digits || 4);
+    }
+
+    function miniDateLine(label, value) {
+      if (!value) return "";
+      return `<div class="fund-mini-subline">${label}：${String(value).slice(0, 16)}</div>`;
     }
 
     function fmtMiniAmount(value) {
@@ -803,7 +885,15 @@
     function sortMiniRecords(records) {
       const items = [...records];
       if (fundMiniState.sortBy === "default") {
-        return items;
+        return items.sort((a, b) => {
+          const am = a.trade_mode === "exchange" ? 0 : 1;
+          const bm = b.trade_mode === "exchange" ? 0 : 1;
+          if (am !== bm) return am - bm;
+          const ap = a.premium_pct == null || Number.isNaN(Number(a.premium_pct)) ? -Infinity : Number(a.premium_pct);
+          const bp = b.premium_pct == null || Number.isNaN(Number(b.premium_pct)) ? -Infinity : Number(b.premium_pct);
+          if (ap !== bp) return bp - ap;
+          return String(a.code).localeCompare(String(b.code));
+        });
       }
       const sortBy = fundMiniState.sortBy;
       const sortOrder = fundMiniState.sortOrder;
@@ -842,19 +932,30 @@
       });
     }
 
+    function updateFundMiniCaption(payload) {
+      const el = $("fundMiniCaption");
+      if (!el) return;
+      const fetchedAt = payload && (payload.dynamic_fetched_at || payload.fetched_at || payload.static_fetched_at);
+      const sourceMode = payload && String(payload.source_mode || "").startsWith("live_direct") ? "联网实时刷新" : "快照回退";
+      el.textContent = `${sourceMode}${fetchedAt ? " · 更新 " + fetchedAt : ""}。公开数据可能存在延迟、缺失或误差；不构成基金推荐，请以官方披露和交易平台为准。`;
+    }
+
     function renderFundMini(records, payload) {
       const sortedRecords = sortMiniRecords(records);
+      updateFundMiniCaption(payload || {});
       updateSortIndicators();
       if (!sortedRecords.length) {
         $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">没有匹配结果，试试切换场内 / 场外或纳指 / 标普。</td></tr>';
       } else {
         $("fundMiniBody").innerHTML = sortedRecords.map((item) => {
-          const navCell = item.latest_nav == null ? "-" : fmtMiniValue(item.latest_nav);
+          const navCell = item.latest_nav == null ? "-" : `${fmtMiniValue(item.latest_nav)}${miniDateLine("净值", item.nav_date)}`;
           const premiumCell = item.trade_mode === "exchange"
-            ? `<span class="${premiumToneClass(item.premium_pct)}">${fmtMiniPct(item.premium_pct)}</span>`
-            : "-";
+            ? `<span class="${premiumToneClass(item.premium_pct)}">${fmtMiniPct(item.premium_pct)}</span>${miniDateLine(item.premium_source === "iopv" ? "IOPV" : "净值", item.premium_date || item.price_date || item.nav_date)}`
+            : '<span class="fund-mini-subline">场外无溢价</span>';
           const feeCell = fmtMiniTotalFee(item);
           const trackingErrorCell = item.tracking_error_pct == null ? "-" : fmtMiniPct(item.tracking_error_pct);
+          const dailyDate = item.daily_change_date || item.estimate_time || item.price_date || item.nav_date;
+          const dailyLabel = item.trade_mode === "exchange" ? "行情" : "估算";
           return `
             <tr>
               <td>
@@ -866,7 +967,7 @@
                 </div>
                 <div class="fund-mini-code">${item.code}</div>
               </td>
-              <td class="${pctToneClass(item.daily_change_pct)}">${fmtMiniPct(item.daily_change_pct)}</td>
+              <td class="${pctToneClass(item.daily_change_pct)}">${fmtMiniPct(item.daily_change_pct)}${miniDateLine(dailyLabel, dailyDate)}</td>
               <td class="${pctToneClass(item.one_year_return_pct)}">${fmtMiniPct(item.one_year_return_pct)}</td>
               <td class="${pctToneClass(item.inception_return_pct)}">${fmtMiniPct(item.inception_return_pct)}</td>
               <td>${navCell}</td>
@@ -889,7 +990,7 @@
         if (fundMiniState.tradeMode) params.set("trade_mode", fundMiniState.tradeMode);
         if (fundMiniState.family) params.set("family", fundMiniState.family);
         if (forceRefresh) params.set("refresh", "1");
-        const response = await fetch(`/api/funds?${params.toString()}`);
+        const response = await fetch(`${API_BASE}/api/funds?${params.toString()}`);
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || "fund_mini_failed");
         fundMiniState.records = payload.records || [];
@@ -900,7 +1001,21 @@
       }
     }
 
-    $("confirmInputs").addEventListener("click", fetchStrategy);
+    async function autoRefresh() {
+      if (document.hidden) return;
+      await fetchStrategy({ silent: true, forceRefresh: true });
+      await loadFundMini(true);
+    }
+
+    function startAutoRefresh() {
+      setAutoRefreshStatus("自动刷新：每15分钟", false);
+      setInterval(autoRefresh, AUTO_REFRESH_MS);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) autoRefresh();
+      });
+    }
+
+    $("confirmInputs").addEventListener("click", () => fetchStrategy({ forceRefresh: true }));
     document.querySelectorAll(".deploy-rate-option").forEach((btn) => {
       btn.addEventListener("click", () => {
         selectedBaseRate = Number(btn.dataset.baseRate || 1.5);
@@ -939,9 +1054,9 @@
       });
     });
     syncBaseRateUi();
-    localFallback("点击刷新策略即可获取今日建议");
-    loadFundMini(false);
-    fetchStrategy();
+    localFallback("正在获取今日建议...");
+    fetchStrategy().finally(() => loadFundMini(false));
+    startAutoRefresh();
   </script>
 </body>
 </html>

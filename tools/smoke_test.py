@@ -11,6 +11,7 @@ import urllib.request
 
 
 BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:8787").rstrip("/")
+REQUEST_TIMEOUT = float(os.environ.get("SMOKE_TIMEOUT_SECONDS", "20"))
 
 
 def request_json(
@@ -27,7 +28,7 @@ def request_json(
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(BASE_URL + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             if resp.status != expect_status:
                 raise AssertionError(f"{path}: expected {expect_status}, got {resp.status}")
             return json.load(resp)
