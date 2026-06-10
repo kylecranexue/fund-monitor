@@ -478,10 +478,13 @@
     const FORM_STORAGE_KEY = "navi100.local.inputs.v1";
     const FUND_CACHE_PREFIX = "navi100.local.funds.v1:";
     const FUND_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+    const MARKET_FOLLOWUP_MAX = 3;
     const INPUT_IDS = ["inputCash", "inputNasdaq", "inputSP", "inputNasdaqTarget", "inputSPTarget"];
     let selectedBaseRate = 1.5;
     let strategyInFlight = false;
     let saveInputsTimer = null;
+    let pendingMarketRefreshTimer = null;
+    let pendingMarketRefreshAttempts = 0;
 
     function val(id) {
       const el = $(id);
@@ -696,7 +699,13 @@
         const data = await resp.json();
         if (!resp.ok || !data.success) throw new Error(data.error || "api_error");
         render(data);
-        setAutoRefreshStatus("自动刷新：" + fmtClock(new Date()), false);
+        if (data.market && data.market.refreshing) {
+          setAutoRefreshStatus("后台更新市场数据中", false);
+          scheduleFollowupStrategyRefresh();
+        } else {
+          pendingMarketRefreshAttempts = 0;
+          setAutoRefreshStatus("自动刷新：" + fmtClock(new Date()), false);
+        }
         if (!opts.silent) showToast("策略已刷新");
       } catch (err) {
         console.error(err);
@@ -716,6 +725,18 @@
       }
     }
 
+    function scheduleFollowupStrategyRefresh() {
+      if (pendingMarketRefreshAttempts >= MARKET_FOLLOWUP_MAX) {
+        setAutoRefreshStatus("后台更新较慢，保留当前数据", false);
+        return;
+      }
+      clearTimeout(pendingMarketRefreshTimer);
+      pendingMarketRefreshAttempts += 1;
+      pendingMarketRefreshTimer = setTimeout(() => {
+        if (!document.hidden) fetchStrategy({ silent: true });
+      }, 3500 * pendingMarketRefreshAttempts);
+    }
+
     function render(d) {
       const m = d.market || {};
       const plan = d.plan || {};
@@ -731,7 +752,11 @@
       $("tempPill").textContent = "市场温度: " + temp;
       const sources = m.data_sources || {};
       const hasSourceErrors = Array.isArray(m.errors) && m.errors.length > 0;
-      $("dataSourceLink").textContent = hasSourceErrors
+      $("dataSourceLink").textContent = m.refreshing
+        ? "数据源：本地快照 · 后台更新中"
+        : sources.snapshot
+        ? "数据源：本地快照 · 后台自动更新"
+        : hasSourceErrors
         ? "数据源：部分实时源失败，已使用缓存/快照回退"
         : sources.index_quotes
         ? "数据源：" + [sources.index_quotes, sources.nasdaq_pe, sources.vix, sources.us10y].filter(Boolean).join(" / ")

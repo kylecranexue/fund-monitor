@@ -8,6 +8,7 @@ exercised end to end without an activation gate.
 from __future__ import annotations
 
 import concurrent.futures
+import gzip
 import json
 import mimetypes
 import os
@@ -43,6 +44,8 @@ FUNDS_CACHE: dict[str, object] = {"expires_at": 0.0, "payload": None}
 MARKET_CACHE: dict[str, object] = {"expires_at": 0.0, "payload": None}
 FUNDS_REFRESH_LOCK = threading.Lock()
 FUNDS_REFRESH_IN_PROGRESS = False
+MARKET_REFRESH_LOCK = threading.Lock()
+MARKET_REFRESH_IN_PROGRESS = False
 SINA_HEADERS = {
     **HTTP_HEADERS,
     "Accept": "*/*",
@@ -93,6 +96,10 @@ def observed_fetch_time() -> str:
 
 def json_bytes(payload: object) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def accepts_gzip(headers: object) -> bool:
+    return "gzip" in str(getattr(headers, "get", lambda _name, _default="": "")("Accept-Encoding", "")).lower()
 
 
 def request_bytes(
@@ -757,6 +764,173 @@ def score_plain(name: str, score: float, values: dict[str, float]) -> str:
     return f"10 年期美债收益率 {y:.3f}%，利率环境中性。"
 
 
+def build_market_payload(
+    *,
+    ndx_quote: dict[str, object],
+    spx_quote: dict[str, object],
+    ndx_rows: list[dict[str, float | str]],
+    spx_rows: list[dict[str, float | str]],
+    vix_close: float,
+    vix_prev_close: float,
+    vix_date: str,
+    us10y: float,
+    us10y_date: str,
+    pe_snapshot: dict[str, object],
+    errors: list[str],
+    source_mode: str,
+) -> dict[str, object]:
+    ndx_history = [as_float(row.get("close")) for row in ndx_rows[-252:]]
+    spx_history = [as_float(row.get("close")) for row in spx_rows[-252:]]
+    price_percentile = (
+        percentile_rank(as_float(ndx_quote["close"]), ndx_history)
+        + percentile_rank(as_float(spx_quote["close"]), spx_history)
+    ) / 2
+    valuation_percentile = as_float(pe_snapshot.get("nasdaq_pe_percentile"), price_percentile)
+
+    ret20 = (trailing_return(ndx_rows, 20) + trailing_return(spx_rows, 20)) / 2
+    ret60 = (trailing_return(ndx_rows, 60) + trailing_return(spx_rows, 60)) / 2
+    valuation_score = clamp(1.0 + valuation_percentile * 8.5, 1.0, 9.5)
+    volatility_score = clamp(9.5 - max(0.0, vix_close - 12.0) * 0.35, 1.0, 9.5)
+    trend_score = clamp(5.0 + ret20 * 0.12 + ret60 * 0.06, 1.0, 9.5)
+    rates_score = clamp((us10y - 3.0) * 1.8 + 4.0, 1.0, 9.5)
+    composite = round(
+        valuation_score * 0.38
+        + volatility_score * 0.24
+        + trend_score * 0.22
+        + rates_score * 0.16,
+        1,
+    )
+    values = {
+        "valuation_percentile": valuation_percentile,
+        "nasdaq_pe": as_float(pe_snapshot.get("nasdaq_pe"), 0.0),
+        "vix": vix_close,
+        "ret20": ret20,
+        "ret60": ret60,
+        "us10y": us10y,
+    }
+    market_date = str(ndx_quote.get("date") or spx_quote.get("date") or vix_date or MARKET_SNAPSHOT["market_date"])
+    return {
+        "market_date": market_date,
+        "fetch_time": observed_fetch_time(),
+        "ndx_close": as_float(ndx_quote["close"]),
+        "ndx_prev_close": as_float(ndx_quote["prev_close"]),
+        "ndx_change_pct": as_float(ndx_quote["change_pct"]),
+        "ndx_date": str(ndx_quote.get("date") or market_date),
+        "spx_close": as_float(spx_quote["close"]),
+        "spx_prev_close": as_float(spx_quote["prev_close"]),
+        "spx_change_pct": as_float(spx_quote["change_pct"]),
+        "spx_date": str(spx_quote.get("date") or market_date),
+        "vix_close": vix_close,
+        "vix_prev_close": vix_prev_close,
+        "vix_change_pct": (vix_close - vix_prev_close) / vix_prev_close * 100 if vix_prev_close else 0.0,
+        "vix_date": vix_date,
+        "us10y": us10y,
+        "us10y_date": us10y_date,
+        **pe_snapshot,
+        "valuation_percentile": valuation_percentile,
+        "valuation_fallback_percentile": price_percentile,
+        "valuation_method": "nasdaq_pe_5y_percentile" if pe_snapshot else "index_price_252d_percentile",
+        "composite": composite,
+        "temperature": classify_temperature(composite),
+        "indicator_details": [
+            {"name": "估值位置", "score": valuation_score, "plain": score_plain("估值位置", valuation_score, values)},
+            {"name": "波动水平", "score": volatility_score, "plain": score_plain("波动水平", volatility_score, values)},
+            {"name": "趋势强弱", "score": trend_score, "plain": score_plain("趋势强弱", trend_score, values)},
+            {"name": "利率环境", "score": rates_score, "plain": score_plain("利率环境", rates_score, values)},
+        ],
+        "data_sources": {
+            "index_quotes": "Sina US quote / Eastmoney push2 / Yahoo chart",
+            "index_history": "Sina US daily K / Eastmoney push2his / Yahoo chart",
+            "vix": "Cboe VIX history",
+            "us10y": "Eastmoney US10Y / CNBC US10Y",
+            "nasdaq_pe": pe_snapshot.get("nasdaq_pe_source") if pe_snapshot else None,
+        },
+        "source_mode": source_mode,
+        "errors": errors,
+    }
+
+
+def fallback_market_snapshot(*, source_mode: str = "local_snapshot") -> dict[str, object]:
+    ndx_close = as_float(MARKET_SNAPSHOT["ndx_close"])
+    ndx_prev = as_float(MARKET_SNAPSHOT["ndx_prev_close"])
+    spx_close = as_float(MARKET_SNAPSHOT["spx_close"])
+    spx_prev = as_float(MARKET_SNAPSHOT["spx_prev_close"])
+    market_date = str(MARKET_SNAPSHOT["market_date"])
+    ndx_quote = {
+        "close": ndx_close,
+        "prev_close": ndx_prev,
+        "change_pct": (ndx_close - ndx_prev) / ndx_prev * 100 if ndx_prev else 0.0,
+        "date": market_date,
+    }
+    spx_quote = {
+        "close": spx_close,
+        "prev_close": spx_prev,
+        "change_pct": (spx_close - spx_prev) / spx_prev * 100 if spx_prev else 0.0,
+        "date": market_date,
+    }
+    ndx_rows = [{"date": market_date, "open": ndx_prev, "close": ndx_prev}, {"date": market_date, "open": ndx_close, "close": ndx_close}]
+    spx_rows = [{"date": market_date, "open": spx_prev, "close": spx_prev}, {"date": market_date, "open": spx_close, "close": spx_close}]
+    payload = build_market_payload(
+        ndx_quote=ndx_quote,
+        spx_quote=spx_quote,
+        ndx_rows=ndx_rows,
+        spx_rows=spx_rows,
+        vix_close=as_float(MARKET_SNAPSHOT["vix_close"]),
+        vix_prev_close=as_float(MARKET_SNAPSHOT["vix_close"]),
+        vix_date=market_date,
+        us10y=as_float(MARKET_SNAPSHOT["us10y"]),
+        us10y_date=market_date,
+        pe_snapshot=dict(PE_SNAPSHOT),
+        errors=[],
+        source_mode=source_mode,
+    )
+    payload["data_sources"] = {"snapshot": "local cached market snapshot"}
+    return payload
+
+
+def refresh_market_cache_background() -> None:
+    global MARKET_REFRESH_IN_PROGRESS
+    try:
+        build_market_snapshot(force_refresh=True)
+    except Exception as exc:
+        stale = cache_payload(MARKET_CACHE) or fallback_market_snapshot()
+        stale["source_mode"] = stale.get("source_mode") or "local_snapshot"
+        stale["errors"] = list(stale.get("errors") or []) + [f"background_market_refresh: {exc}"]
+        cache_set(MARKET_CACHE, stale, min(MARKET_CACHE_TTL, 300))
+    finally:
+        with MARKET_REFRESH_LOCK:
+            MARKET_REFRESH_IN_PROGRESS = False
+
+
+def schedule_market_refresh() -> bool:
+    global MARKET_REFRESH_IN_PROGRESS
+    with MARKET_REFRESH_LOCK:
+        if MARKET_REFRESH_IN_PROGRESS:
+            return True
+        MARKET_REFRESH_IN_PROGRESS = True
+    thread = threading.Thread(target=refresh_market_cache_background, name="market-refresh", daemon=True)
+    thread.start()
+    return True
+
+
+def load_market_snapshot(*, force_refresh: bool = False, prefer_fast: bool = True) -> dict[str, object]:
+    cached = None if force_refresh else cache_get(MARKET_CACHE)
+    if cached is not None:
+        payload = dict(cached)
+        payload["cache"] = "memory"
+        return payload
+
+    if prefer_fast:
+        stale_payload = cache_payload(MARKET_CACHE)
+        payload = stale_payload or fallback_market_snapshot()
+        payload["cache"] = "memory_stale" if stale_payload else "local_snapshot"
+        payload["source_mode"] = payload.get("source_mode") or "local_snapshot"
+        payload["refreshing"] = schedule_market_refresh()
+        return payload
+
+    return build_market_snapshot(force_refresh=True)
+
+
 def build_market_snapshot(*, force_refresh: bool = False) -> dict[str, object]:
     cached = None if force_refresh else cache_get(MARKET_CACHE)
     if cached is not None:
@@ -871,75 +1045,20 @@ def build_market_snapshot(*, force_refresh: bool = False) -> dict[str, object]:
         errors.append(f"nasdaq_pe: {exc}")
         pe_snapshot = dict(PE_SNAPSHOT)
 
-    ndx_history = [as_float(row.get("close")) for row in ndx_rows[-252:]]
-    spx_history = [as_float(row.get("close")) for row in spx_rows[-252:]]
-    price_percentile = (
-        percentile_rank(as_float(ndx_quote["close"]), ndx_history)
-        + percentile_rank(as_float(spx_quote["close"]), spx_history)
-    ) / 2
-    valuation_percentile = as_float(pe_snapshot.get("nasdaq_pe_percentile"), price_percentile)
-
-    ret20 = (trailing_return(ndx_rows, 20) + trailing_return(spx_rows, 20)) / 2
-    ret60 = (trailing_return(ndx_rows, 60) + trailing_return(spx_rows, 60)) / 2
-    valuation_score = clamp(1.0 + valuation_percentile * 8.5, 1.0, 9.5)
-    volatility_score = clamp(9.5 - max(0.0, vix_close - 12.0) * 0.35, 1.0, 9.5)
-    trend_score = clamp(5.0 + ret20 * 0.12 + ret60 * 0.06, 1.0, 9.5)
-    rates_score = clamp((us10y - 3.0) * 1.8 + 4.0, 1.0, 9.5)
-    composite = round(
-        valuation_score * 0.38
-        + volatility_score * 0.24
-        + trend_score * 0.22
-        + rates_score * 0.16,
-        1,
+    payload = build_market_payload(
+        ndx_quote=ndx_quote,
+        spx_quote=spx_quote,
+        ndx_rows=ndx_rows,
+        spx_rows=spx_rows,
+        vix_close=vix_close,
+        vix_prev_close=vix_prev_close,
+        vix_date=vix_date,
+        us10y=us10y,
+        us10y_date=us10y_date,
+        pe_snapshot=pe_snapshot,
+        errors=errors,
+        source_mode="partial_fallback" if errors else "live",
     )
-    values = {
-        "valuation_percentile": valuation_percentile,
-        "nasdaq_pe": as_float(pe_snapshot.get("nasdaq_pe"), 0.0),
-        "vix": vix_close,
-        "ret20": ret20,
-        "ret60": ret60,
-        "us10y": us10y,
-    }
-    market_date = str(ndx_quote.get("date") or spx_quote.get("date") or vix_date or MARKET_SNAPSHOT["market_date"])
-    payload = {
-        "market_date": market_date,
-        "fetch_time": observed_fetch_time(),
-        "ndx_close": as_float(ndx_quote["close"]),
-        "ndx_prev_close": as_float(ndx_quote["prev_close"]),
-        "ndx_change_pct": as_float(ndx_quote["change_pct"]),
-        "ndx_date": str(ndx_quote.get("date") or market_date),
-        "spx_close": as_float(spx_quote["close"]),
-        "spx_prev_close": as_float(spx_quote["prev_close"]),
-        "spx_change_pct": as_float(spx_quote["change_pct"]),
-        "spx_date": str(spx_quote.get("date") or market_date),
-        "vix_close": vix_close,
-        "vix_prev_close": vix_prev_close,
-        "vix_change_pct": (vix_close - vix_prev_close) / vix_prev_close * 100 if vix_prev_close else 0.0,
-        "vix_date": vix_date,
-        "us10y": us10y,
-        "us10y_date": us10y_date,
-        **pe_snapshot,
-        "valuation_percentile": valuation_percentile,
-        "valuation_fallback_percentile": price_percentile,
-        "valuation_method": "nasdaq_pe_5y_percentile" if pe_snapshot else "index_price_252d_percentile",
-        "composite": composite,
-        "temperature": classify_temperature(composite),
-        "indicator_details": [
-            {"name": "估值位置", "score": valuation_score, "plain": score_plain("估值位置", valuation_score, values)},
-            {"name": "波动水平", "score": volatility_score, "plain": score_plain("波动水平", volatility_score, values)},
-            {"name": "趋势强弱", "score": trend_score, "plain": score_plain("趋势强弱", trend_score, values)},
-            {"name": "利率环境", "score": rates_score, "plain": score_plain("利率环境", rates_score, values)},
-        ],
-        "data_sources": {
-            "index_quotes": "Sina US quote / Eastmoney push2 / Yahoo chart",
-            "index_history": "Sina US daily K / Eastmoney push2his / Yahoo chart",
-            "vix": "Cboe VIX history",
-            "us10y": "Eastmoney US10Y / CNBC US10Y",
-            "nasdaq_pe": pe_snapshot.get("nasdaq_pe_source") if pe_snapshot else None,
-        },
-        "source_mode": "partial_fallback" if errors else "live",
-        "errors": errors,
-    }
     return cache_set(MARKET_CACHE, payload, MARKET_CACHE_TTL)
 
 
@@ -978,7 +1097,7 @@ def deploy_label_for_rate(rate: float) -> str:
 
 
 def calculate_strategy(body: dict[str, object]) -> dict[str, object]:
-    market_snapshot = build_market_snapshot(force_refresh=bool(body.get("refresh")))
+    market_snapshot = load_market_snapshot(force_refresh=bool(body.get("refresh")))
     cash = max(0.0, as_float(body.get("investable_cash")))
     ndx_holdings = max(0.0, as_float(body.get("ndx_holdings")))
     spx_holdings = max(0.0, as_float(body.get("spx_holdings")))
@@ -1079,6 +1198,8 @@ def calculate_strategy(body: dict[str, object]) -> dict[str, object]:
             "temperature": temperature,
             "data_sources": market_snapshot.get("data_sources", {}),
             "source_mode": market_snapshot.get("source_mode", "live"),
+            "cache": market_snapshot.get("cache"),
+            "refreshing": market_snapshot.get("refreshing", False),
             "errors": market_snapshot.get("errors", []),
         },
         "plan": {
@@ -1152,9 +1273,15 @@ class NaviHandler(BaseHTTPRequestHandler):
 
     def send_json(self, payload: object, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json_bytes(payload)
+        use_gzip = len(body) > 1024 and accepts_gzip(self.headers)
+        if use_gzip:
+            body = gzip.compress(body)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_cors_headers()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -1183,6 +1310,7 @@ class NaviHandler(BaseHTTPRequestHandler):
                     "data_sources": {"snapshot": "local fallback"},
                     "errors": [],
                 }
+                schedule_market_refresh()
             self.send_json(
                 {
                     "status": "ok",
@@ -1262,10 +1390,18 @@ class NaviHandler(BaseHTTPRequestHandler):
         mime = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         if candidate.suffix == ".html":
             mime = "text/html; charset=utf-8"
+        use_gzip = body and len(data) > 1024 and accepts_gzip(self.headers) and (
+            mime.startswith("text/") or mime.startswith("application/json") or mime.endswith("javascript")
+        )
+        if use_gzip:
+            data = gzip.compress(data)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", mime)
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(candidate.stat().st_size))
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(data) if body else candidate.stat().st_size))
         self.end_headers()
         if body:
             self.wfile.write(data)
