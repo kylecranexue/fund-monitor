@@ -92,6 +92,9 @@
     .progress span{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--yellow));border-radius:99px}
     .market-strip{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow);margin-bottom:20px}
     .strip-item{padding:16px;border-right:1px solid var(--line);min-height:124px}
+    .strip-item.metric-trigger{cursor:pointer;transition:background .18s ease,box-shadow .18s ease}
+    .strip-item.metric-trigger:hover,.strip-item.metric-trigger.active{background:#fbfbfb;box-shadow:inset 0 -3px 0 var(--yellow)}
+    .strip-item.metric-trigger:focus-visible{outline:3px solid rgba(255,216,87,.55);outline-offset:-4px}
     .strip-item:last-child{border-right:0}
     .strip-item h3{margin:0 0 6px;font-size:14px;font-weight:950}
     .strip-item .num{font-size:25px;font-weight:950;margin-bottom:10px}
@@ -103,6 +106,20 @@
     .state.warn{background:#b67a00}
     .fg-meter{width:100%;height:6px;border-radius:99px;background:linear-gradient(90deg,var(--green),#c4b04f,var(--red));position:relative;margin:2px 0 8px}
     .fg-meter span{position:absolute;top:50%;left:50%;width:10px;height:10px;border-radius:50%;background:#111;box-shadow:0 0 0 2px #fff;transform:translate(-50%,-50%)}
+    .market-detail-panel{display:none;margin:-6px 0 20px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:var(--shadow)}
+    .market-detail-panel.active{display:block}
+    .market-detail-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:14px}
+    .market-detail-kicker{font-size:11px;color:var(--muted);font-weight:900;margin-bottom:4px}
+    .market-detail-title{margin:0;font-size:20px;font-weight:950}
+    .market-detail-source{font-size:11px;font-weight:900;color:#4f5965;text-decoration:none}
+    .market-detail-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    .market-detail-cell{padding:12px;border:1px solid #edf0f2;border-radius:12px;background:#fbfbfb}
+    .market-detail-wide{margin-top:10px}
+    .market-detail-label{font-size:11px;color:var(--muted);font-weight:900;margin-bottom:6px}
+    .market-detail-text{font-size:12px;line-height:1.55;color:#34404d;font-weight:700}
+    .market-detail-components{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+    .market-detail-chip{display:inline-flex;align-items:center;gap:4px;min-height:24px;padding:0 8px;border-radius:999px;background:#f1f3f5;color:#44505d;font-size:11px;font-weight:900}
+    .market-detail-chip b{color:#111}
     .formula-block{margin-bottom:18px}
     .formula-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:14px 18px;background:var(--yellow-soft);border-radius:12px;margin-bottom:8px}
     .f-base{font-size:22px;font-weight:950}
@@ -195,6 +212,7 @@
       .topbar{flex-direction:column;align-items:flex-start;gap:8px}.top-actions{width:100%;gap:6px}.pill{height:auto;min-height:32px;padding:7px 10px;white-space:normal}
       .hero-card,.status-card,.explain-card,.alloc-card{padding:18px 16px}.hero-top{flex-direction:column;gap:8px}.hero-title{font-size:19px;margin-bottom:12px}.hero-amount-row{gap:14px}.hero-amount{font-size:42px;letter-spacing:0}.hero-amount span{font-size:20px}.hero-split{width:100%;justify-content:space-between}.hero-btns{margin-top:12px}
       .market-strip,.indicator-cards,.status-grid{grid-template-columns:1fr}.strip-item{min-height:auto;border-right:0;border-bottom:1px solid var(--line)}.strip-item:last-child{border-bottom:0}.strip-item .num{font-size:23px}
+      .market-detail-panel{padding:16px 14px}.market-detail-head{flex-direction:column;gap:8px}.market-detail-grid{grid-template-columns:1fr}
       .hero-btns{align-items:flex-start}.temp-scale{margin-left:0}.donut-wrap{flex-direction:column;align-items:flex-start}.donut{width:132px;height:132px}.donut::after{width:88px;height:88px}
       .formula-line{padding:12px;gap:7px}.f-base{font-size:18px}.f-result{font-size:22px}.section-title h2{font-size:18px}
       .fund-mini{padding:16px 14px}.fund-mini-title{font-size:19px}.fund-mini-table{min-width:820px}.fund-mini-table th,.fund-mini-table td{padding:8px 7px}
@@ -348,37 +366,38 @@
       </div>
       <p class="calc-note market-note">市场温度评分按纳指100 PE估值分位、VIX波动、短中期趋势、10年美债利率加权计算；PE不可用时才回退到指数点位分位。每次手动刷新或自动刷新都会重新联网取数。</p>
       <section class="market-strip">
-        <div class="strip-item">
+        <div class="strip-item metric-trigger" data-metric-key="ndx" role="button" tabindex="0" aria-controls="marketDetailPanel" aria-expanded="false">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 14 C14 4,22 9,32 5 C46 0,55 8,68 5 C82 4,90 14,96 10" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>纳指100</h3><div class="num" id="ndxPrice">--</div><span class="state" id="ndxChange">--</span>
           <div class="strip-date" id="ndxDate">--</div>
         </div>
-        <div class="strip-item">
+        <div class="strip-item metric-trigger" data-metric-key="spx" role="button" tabindex="0" aria-controls="marketDetailPanel" aria-expanded="false">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 17 C15 8,25 2,38 8 C52 1,62 8,74 6 C86 5,90 12,96 13" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>标普500</h3><div class="num" id="spxPrice">--</div><span class="state" id="spxChange">--</span>
           <div class="strip-date" id="spxDate">--</div>
         </div>
-        <div class="strip-item">
+        <div class="strip-item metric-trigger" data-metric-key="pe" role="button" tabindex="0" aria-controls="marketDetailPanel" aria-expanded="false">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 16 C10 10,20 13,30 7 C44 1,55 4,66 10 C78 17,88 8,96 11" stroke="#0d7bc7" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>纳指100 PE</h3><div class="num" id="ndxPe">--</div><span class="state neutral" id="ndxPeState">--</span>
           <div class="strip-date" id="ndxPeDate">--</div>
         </div>
-        <div class="strip-item">
+        <div class="strip-item metric-trigger" data-metric-key="vix" role="button" tabindex="0" aria-controls="marketDetailPanel" aria-expanded="false">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 12 C14 6,28 4,40 10 C54 15,62 10,72 16 C84 20,90 14,96 16" stroke="#0c8a70" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>VIX</h3><div class="num" id="vixPrice">--</div><span class="state green" id="vixChange">--</span>
           <div class="strip-date" id="vixDate">--</div>
         </div>
-        <div class="strip-item">
+        <div class="strip-item metric-trigger" data-metric-key="cnn" role="button" tabindex="0" aria-controls="marketDetailPanel" aria-expanded="false">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 11 C12 15,21 5,34 8 C47 11,55 18,67 10 C79 3,88 8,96 5" stroke="#b67a00" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>CNN情绪</h3><div class="num" id="cnnFearGreed">--</div><div class="fg-meter"><span id="cnnFearGreedDot"></span></div><span class="state neutral" id="cnnFearGreedState">--</span>
           <div class="strip-date" id="cnnFearGreedDate">--</div>
         </div>
-        <div class="strip-item">
+        <div class="strip-item metric-trigger" data-metric-key="us10y" role="button" tabindex="0" aria-controls="marketDetailPanel" aria-expanded="false">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 15 C16 6,30 4,44 7 C60 9,70 14,82 12 C90 11,94 15,96 16" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>美债10Y</h3><div class="num" id="us10yPrice">--</div><span class="state" id="us10yState">--</span>
           <div class="strip-date" id="us10yDate">--</div>
         </div>
       </section>
+      <section class="market-detail-panel" id="marketDetailPanel" aria-live="polite"></section>
 
       <div class="lower-row">
         <section class="card explain-card" id="explainCard">
@@ -503,6 +522,8 @@
     let saveInputsTimer = null;
     let pendingMarketRefreshTimer = null;
     let pendingMarketRefreshAttempts = 0;
+    let latestMetricDetails = {};
+    let activeMetricKey = "";
 
     function val(id) {
       const el = $(id);
@@ -528,6 +549,15 @@
       if (!value) return "--";
       const text = String(value).slice(0, 16);
       return (prefix || "日期") + "：" + text;
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
 
     function setAutoRefreshStatus(text, isError) {
@@ -619,6 +649,65 @@
       $("cnnFearGreedState").textContent = cnn.rating_label || "--";
       $("cnnFearGreedDot").style.left = Math.max(3, Math.min(97, Number(cnn.score || 50))) + "%";
       $("cnnFearGreedDate").textContent = cnn.date ? `CNN：${cnn.date}` : "CNN源暂不可用";
+    }
+
+    function renderMetricDetail(key) {
+      const panel = $("marketDetailPanel");
+      const detail = latestMetricDetails[key];
+      activeMetricKey = key || "";
+      document.querySelectorAll(".metric-trigger").forEach((node) => {
+        const active = node.dataset.metricKey === activeMetricKey;
+        node.classList.toggle("active", active);
+        node.setAttribute("aria-expanded", active ? "true" : "false");
+      });
+      if (!key || !detail || !panel) {
+        if (panel) {
+          panel.className = "market-detail-panel";
+          panel.innerHTML = "";
+        }
+        return;
+      }
+      const components = Array.isArray(detail.components) ? detail.components : [];
+      const chips = components.length
+        ? `<div class="market-detail-components">${components.map((item) => {
+            const score = item.score == null ? "--" : Number(item.score).toFixed(1);
+            return `<span class="market-detail-chip">${escapeHtml(item.name || item.key || "--")} <b>${escapeHtml(score)}</b> ${escapeHtml(item.rating_label || "")}</span>`;
+          }).join("")}</div>`
+        : "";
+      const sourceUrl = detail.source_url ? String(detail.source_url) : "";
+      panel.innerHTML = `
+        <div class="market-detail-head">
+          <div>
+            <div class="market-detail-kicker">${escapeHtml(detail.subtitle || "指标说明")}</div>
+            <h3 class="market-detail-title">${escapeHtml(detail.title || "--")}</h3>
+          </div>
+          ${sourceUrl ? `<a class="market-detail-source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">查看数据源</a>` : ""}
+        </div>
+        <div class="market-detail-grid">
+          <div class="market-detail-cell">
+            <div class="market-detail-label">当前数据</div>
+            <div class="market-detail-text">${escapeHtml(detail.value_note || "--")}</div>
+          </div>
+          <div class="market-detail-cell">
+            <div class="market-detail-label">计算原理</div>
+            <div class="market-detail-text">${escapeHtml(detail.formula || "--")}</div>
+          </div>
+          <div class="market-detail-cell">
+            <div class="market-detail-label">数据来源</div>
+            <div class="market-detail-text">${escapeHtml(detail.source || "--")}<br>${escapeHtml(detail.date ? "日期：" + detail.date : "日期：--")}<br>${detail.fallback ? "当前含缓存或回退数据" : "当前使用实时/最新可用数据"}</div>
+          </div>
+        </div>
+        <div class="market-detail-cell market-detail-wide">
+          <div class="market-detail-label">如何理解</div>
+          <div class="market-detail-text">${escapeHtml(detail.principle || "--")}</div>
+        </div>
+        ${chips}
+      `;
+      panel.className = "market-detail-panel active";
+    }
+
+    function toggleMetricDetail(key) {
+      renderMetricDetail(activeMetricKey === key ? "" : key);
     }
 
     function tempBadgeClass(t) {
@@ -806,6 +895,8 @@
       const baseRatePct = plan.base_rate ? (plan.base_rate * 100).toFixed(1) : selectedBaseRate.toFixed(1);
       const ndxChangePct = m.ndx_change_pct;
       const spxChangePct = m.spx_change_pct;
+      latestMetricDetails = m.metric_details || latestMetricDetails || {};
+      if (activeMetricKey) renderMetricDetail(activeMetricKey);
 
       $("marketDatePill").textContent = "数据截至美股 " + (d.market_date || (d.fetch_time ? d.fetch_time.slice(0, 10) : "--")) + " 收盘";
       $("tempPill").textContent = "市场温度: " + temp;
@@ -1206,6 +1297,10 @@
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || "cnn_failed");
         renderCnnFearGreed(payload);
+        if (payload.detail) {
+          latestMetricDetails.cnn = payload.detail;
+          if (activeMetricKey === "cnn") renderMetricDetail("cnn");
+        }
       } catch (error) {
         console.warn("CNN fear & greed refresh failed", error);
       }
@@ -1231,6 +1326,15 @@
         selectedBaseRate = Number(btn.dataset.baseRate || 1.5);
         syncBaseRateUi();
         saveInputsNow();
+      });
+    });
+    document.querySelectorAll(".metric-trigger").forEach((item) => {
+      item.addEventListener("click", () => toggleMetricDetail(item.dataset.metricKey || ""));
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggleMetricDetail(item.dataset.metricKey || "");
+        }
       });
     });
     document.querySelectorAll("#miniTradeFilters .mini-filter-btn").forEach((btn) => {

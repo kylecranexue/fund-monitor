@@ -856,6 +856,100 @@ def build_cnn_fear_greed_snapshot() -> dict[str, object]:
     }
 
 
+def metric_detail_payload(market: dict[str, object]) -> dict[str, object]:
+    data_sources = market.get("data_sources") if isinstance(market.get("data_sources"), dict) else {}
+    cnn = market.get("cnn_fear_greed") if isinstance(market.get("cnn_fear_greed"), dict) else {}
+    cnn_components = cnn.get("components") if isinstance(cnn.get("components"), list) else []
+    pe_percentile = as_float(market.get("nasdaq_pe_percentile")) * 100
+    cnn_score = as_float(cnn.get("score"), float("nan"))
+    return {
+        "ndx": {
+            "title": "纳指100",
+            "subtitle": "NASDAQ-100 指数实时行情",
+            "date": market.get("ndx_date") or market.get("market_date") or "",
+            "source": data_sources.get("index_quotes") or "Sina US quote / Eastmoney push2 / Yahoo chart",
+            "source_url": "https://finance.yahoo.com/quote/%5ENDX/",
+            "formula": "涨跌幅 = (最新点位 - 前一交易日收盘点位) / 前一交易日收盘点位 × 100%。",
+            "principle": "用于观察纳指100大型成长股当日风险偏好。点位上涨通常代表风险偏好改善，点位下跌通常代表风险偏好转弱。",
+            "value_note": f"最新点位 {as_float(market.get('ndx_close')):.2f}，当日涨跌 {as_float(market.get('ndx_change_pct')):+.2f}%。",
+            "fallback": "ndx" in " ".join(str(item) for item in market.get("errors", [])),
+        },
+        "spx": {
+            "title": "标普500",
+            "subtitle": "S&P 500 指数实时行情",
+            "date": market.get("spx_date") or market.get("market_date") or "",
+            "source": data_sources.get("index_quotes") or "Sina US quote / Eastmoney push2 / Yahoo chart",
+            "source_url": "https://finance.yahoo.com/quote/%5EGSPC/",
+            "formula": "涨跌幅 = (最新点位 - 前一交易日收盘点位) / 前一交易日收盘点位 × 100%。",
+            "principle": "用于观察美国大盘整体表现。它比纳指100行业分布更分散，可作为市场整体风险情绪的参照。",
+            "value_note": f"最新点位 {as_float(market.get('spx_close')):.2f}，当日涨跌 {as_float(market.get('spx_change_pct')):+.2f}%。",
+            "fallback": "spx" in " ".join(str(item) for item in market.get("errors", [])),
+        },
+        "pe": {
+            "title": "纳指100 PE",
+            "subtitle": "纳指100估值温度",
+            "date": market.get("nasdaq_pe_date") or "",
+            "source": data_sources.get("nasdaq_pe") or market.get("nasdaq_pe_source") or "World PE Ratio",
+            "source_url": market.get("nasdaq_pe_url") or WORLD_PE_URL,
+            "formula": "估值分位 = 近5年历史 PE 中低于或等于当前 PE 的样本数 / 总样本数。",
+            "principle": "PE 越高代表市场为纳指100成分股盈利支付的价格越高，估值温度越热；PE 越低则估值压力相对较小。",
+            "value_note": (
+                f"当前 PE {as_float(market.get('nasdaq_pe')):.2f}，近5年约 {pe_percentile:.0f}% 分位，"
+                f"当前判断为{market.get('nasdaq_pe_label') or '--'}。"
+            ),
+            "fallback": "nasdaq_pe" in " ".join(str(item) for item in market.get("errors", [])),
+        },
+        "vix": {
+            "title": "VIX",
+            "subtitle": "标普500期权隐含波动率",
+            "date": market.get("vix_date") or "",
+            "source": data_sources.get("vix") or "Cboe VIX history",
+            "source_url": "https://www.cboe.com/tradable_products/vix/vix_historical_data/",
+            "formula": "VIX 由标普500期权价格推导，表示市场对未来约30天年化波动率的预期。",
+            "principle": "VIX 越高通常代表避险和恐慌越强；VIX 越低通常代表市场情绪更平稳或偏乐观。",
+            "value_note": f"当前 VIX {as_float(market.get('vix_close')):.2f}，较前值 {as_float(market.get('vix_change_pct')):+.2f}%。",
+            "fallback": "vix" in " ".join(str(item) for item in market.get("errors", [])),
+        },
+        "cnn": {
+            "title": "CNN情绪",
+            "subtitle": "CNN Fear & Greed Index",
+            "date": cnn.get("date") or "",
+            "source": data_sources.get("cnn_fear_greed") or cnn.get("source") or "CNN Fear & Greed API",
+            "source_url": cnn.get("url") or "https://edition.cnn.com/markets/fear-and-greed",
+            "formula": "CNN 将 7 个情绪子指标标准化为 0-100 分，再等权平均得到总分。",
+            "principle": "0 代表极度恐惧，100 代表极度贪婪。恐惧偏高时市场风险偏好较弱，贪婪偏高时追涨情绪更强。",
+            "value_note": (
+                f"当前分数 {cnn_score:.1f}，评级{cnn.get('rating_label') or '--'}。"
+                if cnn_score == cnn_score
+                else "当前 CNN 情绪指数暂不可用。"
+            ),
+            "fallback": "cnn_fear_greed" in " ".join(str(item) for item in market.get("errors", [])),
+            "components": cnn_components,
+        },
+        "us10y": {
+            "title": "美债10Y",
+            "subtitle": "美国10年期国债收益率",
+            "date": market.get("us10y_date") or "",
+            "source": data_sources.get("us10y") or "Eastmoney US10Y / CNBC US10Y",
+            "source_url": "https://www.cnbc.com/quotes/US10Y",
+            "formula": "展示美国10年期国债收益率报价，页面按收益率水平判断利率环境。",
+            "principle": "10年期美债收益率越高，通常意味着权益估值折现压力越大；收益率回落则对成长股估值相对友好。",
+            "value_note": f"当前收益率 {as_float(market.get('us10y')):.3f}%。",
+            "fallback": "us10y" in " ".join(str(item) for item in market.get("errors", [])),
+        },
+    }
+
+
+def cnn_metric_detail(cnn: dict[str, object], errors: list[str] | None = None) -> dict[str, object]:
+    return metric_detail_payload(
+        {
+            "cnn_fear_greed": cnn,
+            "data_sources": {"cnn_fear_greed": cnn.get("source") or "CNN Fear & Greed API"},
+            "errors": errors or [],
+        }
+    )["cnn"]
+
+
 def score_plain(name: str, score: float, values: dict[str, float]) -> str:
     if name == "估值位置":
         pct = values.get("valuation_percentile", 0.5) * 100
@@ -932,7 +1026,7 @@ def build_market_payload(
         "us10y": us10y,
     }
     market_date = str(ndx_quote.get("date") or spx_quote.get("date") or vix_date or MARKET_SNAPSHOT["market_date"])
-    return {
+    payload = {
         "market_date": market_date,
         "fetch_time": observed_fetch_time(),
         "ndx_close": as_float(ndx_quote["close"]),
@@ -973,6 +1067,8 @@ def build_market_payload(
         "source_mode": source_mode,
         "errors": errors,
     }
+    payload["metric_details"] = metric_detail_payload(payload)
+    return payload
 
 
 def fallback_market_snapshot(*, source_mode: str = "local_snapshot") -> dict[str, object]:
@@ -1341,6 +1437,7 @@ def calculate_strategy(body: dict[str, object]) -> dict[str, object]:
             "cache": market_snapshot.get("cache"),
             "refreshing": market_snapshot.get("refreshing", False),
             "errors": market_snapshot.get("errors", []),
+            "metric_details": market_snapshot.get("metric_details", {}),
         },
         "plan": {
             "base_rate": base_rate_pct / 100.0,
@@ -1473,15 +1570,16 @@ class NaviHandler(BaseHTTPRequestHandler):
             cached_market = None if force_refresh else cache_get(MARKET_CACHE) or cache_payload(MARKET_CACHE)
             cached_cnn = cached_market.get("cnn_fear_greed") if isinstance(cached_market, dict) else None
             if isinstance(cached_cnn, dict):
-                self.send_json({"success": True, "access": "open", **cached_cnn, "cache": "market"})
+                self.send_json({"success": True, "access": "open", **cached_cnn, "cache": "market", "detail": cnn_metric_detail(cached_cnn)})
                 return
             try:
-                self.send_json({"success": True, "access": "open", **build_cnn_fear_greed_snapshot()})
+                cnn = build_cnn_fear_greed_snapshot()
+                self.send_json({"success": True, "access": "open", **cnn, "detail": cnn_metric_detail(cnn)})
             except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
                 fallback = dict(CNN_FEAR_GREED_SNAPSHOT)
                 fallback["error"] = str(exc)
                 fallback["source_mode"] = "local_snapshot"
-                self.send_json({"success": True, "access": "open", **fallback})
+                self.send_json({"success": True, "access": "open", **fallback, "detail": cnn_metric_detail(fallback, [str(exc)])})
             return
 
         if path == "/api/funds":
