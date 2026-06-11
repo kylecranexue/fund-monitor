@@ -38,6 +38,12 @@ HTTP_HEADERS = {
     "Connection": "close",
     "Referer": "https://quote.eastmoney.com/",
 }
+CNN_FEAR_GREED_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+CNN_HEADERS = {
+    **HTTP_HEADERS,
+    "Accept": "application/json,text/plain,*/*",
+    "Referer": "https://edition.cnn.com/markets/fear-and-greed",
+}
 CN_TZ = timezone(timedelta(hours=8))
 SSL_CONTEXT = ssl._create_unverified_context()
 FUNDS_CACHE: dict[str, object] = {"expires_at": 0.0, "payload": None}
@@ -72,6 +78,21 @@ PE_SNAPSHOT = {
     "nasdaq_pe_label": "合理",
     "nasdaq_pe_source": "World PE Ratio cached snapshot",
     "nasdaq_pe_url": "https://worldperatio.com/index/nasdaq-100/",
+}
+
+CNN_FEAR_GREED_SNAPSHOT = {
+    "score": 27.6,
+    "rating": "fear",
+    "rating_label": "恐惧",
+    "timestamp": "2026-06-11T00:00:00+00:00",
+    "date": "2026-06-11",
+    "previous_close": 27.5,
+    "previous_1_week": 53.9,
+    "previous_1_month": 66.6,
+    "previous_1_year": 64.2,
+    "source": "CNN Fear & Greed cached snapshot",
+    "url": "https://edition.cnn.com/markets/fear-and-greed",
+    "components": [],
 }
 
 EASTMONEY_QUOTE_FIELDS = "f43,f44,f45,f46,f47,f57,f58,f60,f86,f169,f170"
@@ -135,8 +156,14 @@ def request_text(
     return request_bytes(url, timeout=timeout, headers=headers, attempts=attempts).decode(encoding, "replace")
 
 
-def request_json(url: str, *, timeout: float = HTTP_TIMEOUT) -> dict[str, object]:
-    payload = json.loads(request_text(url, timeout=timeout))
+def request_json(
+    url: str,
+    *,
+    timeout: float = HTTP_TIMEOUT,
+    headers: dict[str, str] | None = None,
+    attempts: int = 2,
+) -> dict[str, object]:
+    payload = json.loads(request_text(url, timeout=timeout, headers=headers, attempts=attempts))
     return payload if isinstance(payload, dict) else {}
 
 
@@ -734,6 +761,101 @@ def build_nasdaq_pe_snapshot() -> dict[str, object]:
     }
 
 
+def cnn_rating_label(rating: object, score: float | None = None) -> str:
+    raw = str(rating or "").strip().lower().replace("_", " ")
+    labels = {
+        "extreme fear": "极度恐惧",
+        "fear": "恐惧",
+        "neutral": "中性",
+        "greed": "贪婪",
+        "extreme greed": "极度贪婪",
+    }
+    if raw in labels:
+        return labels[raw]
+    if score is None:
+        return "--"
+    if score <= 25:
+        return "极度恐惧"
+    if score <= 44:
+        return "恐惧"
+    if score <= 55:
+        return "中性"
+    if score <= 74:
+        return "贪婪"
+    return "极度贪婪"
+
+
+def cnn_date_text(timestamp: object) -> str:
+    raw = str(timestamp or "").strip()
+    if not raw:
+        return ""
+    try:
+        if re.fullmatch(r"\d+(\.\d+)?", raw):
+            value = float(raw)
+            if value > 100000000000:
+                value /= 1000
+            return datetime.fromtimestamp(value, CN_TZ).strftime("%Y-%m-%d")
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(CN_TZ).strftime("%Y-%m-%d")
+    except (OSError, ValueError):
+        return raw[:10]
+
+
+def build_cnn_fear_greed_snapshot() -> dict[str, object]:
+    payload = request_json(CNN_FEAR_GREED_URL, timeout=5, headers=CNN_HEADERS)
+    current = payload.get("fear_and_greed")
+    if not isinstance(current, dict):
+        raise ValueError("missing CNN fear_and_greed")
+
+    score = as_float(current.get("score"), float("nan"))
+    if score != score:
+        raise ValueError("missing CNN fear_and_greed score")
+
+    def optional_float(value: object) -> float | None:
+        number = as_float(value, float("nan"))
+        return None if number != number else round(number, 1)
+
+    component_names = [
+        ("market_momentum_sp500", "市场动能"),
+        ("stock_price_strength", "股价强度"),
+        ("stock_price_breadth", "市场宽度"),
+        ("put_call_options", "期权情绪"),
+        ("market_volatility_vix", "市场波动"),
+        ("junk_bond_demand", "垃圾债需求"),
+        ("safe_haven_demand", "避险需求"),
+    ]
+    components: list[dict[str, object]] = []
+    for key, label in component_names:
+        item = payload.get(key)
+        if not isinstance(item, dict):
+            continue
+        item_score = as_float(item.get("score"), float("nan"))
+        components.append(
+            {
+                "key": key,
+                "name": label,
+                "score": None if item_score != item_score else round(item_score, 1),
+                "rating": item.get("rating") or "",
+                "rating_label": cnn_rating_label(item.get("rating"), item_score if item_score == item_score else None),
+                "date": cnn_date_text(item.get("timestamp")),
+            }
+        )
+
+    return {
+        "score": round(score, 1),
+        "rating": current.get("rating") or "",
+        "rating_label": cnn_rating_label(current.get("rating"), score),
+        "timestamp": current.get("timestamp") or "",
+        "date": cnn_date_text(current.get("timestamp")),
+        "previous_close": optional_float(current.get("previous_close")),
+        "previous_1_week": optional_float(current.get("previous_1_week")),
+        "previous_1_month": optional_float(current.get("previous_1_month")),
+        "previous_1_year": optional_float(current.get("previous_1_year")),
+        "source": "CNN Fear & Greed API",
+        "url": "https://edition.cnn.com/markets/fear-and-greed",
+        "components": components,
+    }
+
+
 def score_plain(name: str, score: float, values: dict[str, float]) -> str:
     if name == "估值位置":
         pct = values.get("valuation_percentile", 0.5) * 100
@@ -776,6 +898,7 @@ def build_market_payload(
     us10y: float,
     us10y_date: str,
     pe_snapshot: dict[str, object],
+    cnn_fear_greed: dict[str, object],
     errors: list[str],
     source_mode: str,
 ) -> dict[str, object]:
@@ -826,6 +949,7 @@ def build_market_payload(
         "vix_date": vix_date,
         "us10y": us10y,
         "us10y_date": us10y_date,
+        "cnn_fear_greed": cnn_fear_greed,
         **pe_snapshot,
         "valuation_percentile": valuation_percentile,
         "valuation_fallback_percentile": price_percentile,
@@ -844,6 +968,7 @@ def build_market_payload(
             "vix": "Cboe VIX history",
             "us10y": "Eastmoney US10Y / CNBC US10Y",
             "nasdaq_pe": pe_snapshot.get("nasdaq_pe_source") if pe_snapshot else None,
+            "cnn_fear_greed": cnn_fear_greed.get("source") if cnn_fear_greed else None,
         },
         "source_mode": source_mode,
         "errors": errors,
@@ -881,6 +1006,7 @@ def fallback_market_snapshot(*, source_mode: str = "local_snapshot") -> dict[str
         us10y=as_float(MARKET_SNAPSHOT["us10y"]),
         us10y_date=market_date,
         pe_snapshot=dict(PE_SNAPSHOT),
+        cnn_fear_greed=dict(CNN_FEAR_GREED_SNAPSHOT),
         errors=[],
         source_mode=source_mode,
     )
@@ -1045,6 +1171,12 @@ def build_market_snapshot(*, force_refresh: bool = False) -> dict[str, object]:
         errors.append(f"nasdaq_pe: {exc}")
         pe_snapshot = dict(PE_SNAPSHOT)
 
+    try:
+        cnn_fear_greed = build_cnn_fear_greed_snapshot()
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
+        errors.append(f"cnn_fear_greed: {exc}")
+        cnn_fear_greed = dict(CNN_FEAR_GREED_SNAPSHOT)
+
     payload = build_market_payload(
         ndx_quote=ndx_quote,
         spx_quote=spx_quote,
@@ -1056,6 +1188,7 @@ def build_market_snapshot(*, force_refresh: bool = False) -> dict[str, object]:
         us10y=us10y,
         us10y_date=us10y_date,
         pe_snapshot=pe_snapshot,
+        cnn_fear_greed=cnn_fear_greed,
         errors=errors,
         source_mode="partial_fallback" if errors else "live",
     )
@@ -1158,6 +1291,12 @@ def calculate_strategy(body: dict[str, object]) -> dict[str, object]:
             else "PE估值源暂不可用，估值位置回退为指数点位分位。"
         ),
         f"VIX 为 {as_float(market_snapshot.get('vix_close')):.2f}，波动越高代表市场越恐慌，温度越冷。",
+        (
+            f"CNN 恐惧贪婪指数为 {as_float((market_snapshot.get('cnn_fear_greed') or {}).get('score')):.1f}，"
+            f"评级{(market_snapshot.get('cnn_fear_greed') or {}).get('rating_label') or '--'}，用于观察美股整体情绪。"
+            if isinstance(market_snapshot.get("cnn_fear_greed"), dict)
+            else "CNN 恐惧贪婪指数暂不可用。"
+        ),
         f"10 年期美债收益率 {as_float(market_snapshot.get('us10y')):.3f}%，用于衡量利率对权益估值的压力。",
         f"当前仓位约 {invest_ratio:.1f}%，本次按目标配置优先补足偏离较大的方向。",
     ]
@@ -1193,6 +1332,7 @@ def calculate_strategy(body: dict[str, object]) -> dict[str, object]:
             "nasdaq_pe_fair_high": market_snapshot.get("nasdaq_pe_fair_high"),
             "nasdaq_pe_label": market_snapshot.get("nasdaq_pe_label"),
             "nasdaq_pe_url": market_snapshot.get("nasdaq_pe_url"),
+            "cnn_fear_greed": market_snapshot.get("cnn_fear_greed"),
             "valuation_method": market_snapshot.get("valuation_method"),
             "composite": composite,
             "temperature": temperature,
@@ -1328,6 +1468,22 @@ class NaviHandler(BaseHTTPRequestHandler):
             self.send_json({"success": True, "access": "open"})
             return
 
+        if path == "/api/cnn-fear-greed":
+            force_refresh = (query.get("refresh") or [""])[0] in {"1", "true", "yes"}
+            cached_market = None if force_refresh else cache_get(MARKET_CACHE) or cache_payload(MARKET_CACHE)
+            cached_cnn = cached_market.get("cnn_fear_greed") if isinstance(cached_market, dict) else None
+            if isinstance(cached_cnn, dict):
+                self.send_json({"success": True, "access": "open", **cached_cnn, "cache": "market"})
+                return
+            try:
+                self.send_json({"success": True, "access": "open", **build_cnn_fear_greed_snapshot()})
+            except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
+                fallback = dict(CNN_FEAR_GREED_SNAPSHOT)
+                fallback["error"] = str(exc)
+                fallback["source_mode"] = "local_snapshot"
+                self.send_json({"success": True, "access": "open", **fallback})
+            return
+
         if path == "/api/funds":
             force_refresh = (query.get("refresh") or [""])[0] in {"1", "true", "yes"}
             payload = load_live_funds_payload(force_refresh=force_refresh)
@@ -1408,6 +1564,12 @@ class NaviHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    # Pre-warm market cache at startup: even on Render cold start, the first
+    # /api/calculate response is instant because snapshot data is ready.
+    if not cache_get(MARKET_CACHE):
+        cache_set(MARKET_CACHE, fallback_market_snapshot(source_mode="startup_snapshot"), MARKET_CACHE_TTL)
+        print("Market cache pre-warmed with startup snapshot")
+
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8787"))
     server = ThreadingHTTPServer((host, port), NaviHandler)

@@ -90,7 +90,7 @@
     .progress-top{display:flex;justify-content:space-between;color:#6f7884;font-size:12px;font-weight:850;margin-bottom:6px}
     .progress{height:8px;border-radius:99px;background:#eaedf0;overflow:hidden}
     .progress span{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--yellow));border-radius:99px}
-    .market-strip{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow);margin-bottom:20px}
+    .market-strip{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow);margin-bottom:20px}
     .strip-item{padding:16px;border-right:1px solid var(--line);min-height:124px}
     .strip-item:last-child{border-right:0}
     .strip-item h3{margin:0 0 6px;font-size:14px;font-weight:950}
@@ -100,6 +100,9 @@
     .state{display:inline-block;background:var(--red);color:#fff;padding:6px 12px;border-radius:4px;font-size:13px;font-weight:950}
     .state.green{background:var(--green)}
     .state.neutral{background:#7b8694}
+    .state.warn{background:#b67a00}
+    .fg-meter{width:100%;height:6px;border-radius:99px;background:linear-gradient(90deg,var(--green),#c4b04f,var(--red));position:relative;margin:2px 0 8px}
+    .fg-meter span{position:absolute;top:50%;left:50%;width:10px;height:10px;border-radius:50%;background:#111;box-shadow:0 0 0 2px #fff;transform:translate(-50%,-50%)}
     .formula-block{margin-bottom:18px}
     .formula-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:14px 18px;background:var(--yellow-soft);border-radius:12px;margin-bottom:8px}
     .f-base{font-size:22px;font-weight:950}
@@ -366,6 +369,11 @@
           <div class="strip-date" id="vixDate">--</div>
         </div>
         <div class="strip-item">
+          <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 11 C12 15,21 5,34 8 C47 11,55 18,67 10 C79 3,88 8,96 5" stroke="#b67a00" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
+          <h3>CNN情绪</h3><div class="num" id="cnnFearGreed">--</div><div class="fg-meter"><span id="cnnFearGreedDot"></span></div><span class="state neutral" id="cnnFearGreedState">--</span>
+          <div class="strip-date" id="cnnFearGreedDate">--</div>
+        </div>
+        <div class="strip-item">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 15 C16 6,30 4,44 7 C60 9,70 14,82 12 C90 11,94 15,96 16" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
           <h3>美债10Y</h3><div class="num" id="us10yPrice">--</div><span class="state" id="us10yState">--</span>
           <div class="strip-date" id="us10yDate">--</div>
@@ -595,6 +603,24 @@
       return "state neutral";
     }
 
+    function cnnStateClass(score) {
+      if (score == null || Number.isNaN(Number(score))) return "state neutral";
+      const num = Number(score);
+      if (num <= 44) return "state green";
+      if (num <= 55) return "state neutral";
+      if (num <= 74) return "state warn";
+      return "state";
+    }
+
+    function renderCnnFearGreed(cnn) {
+      cnn = cnn || {};
+      $("cnnFearGreed").textContent = cnn.score != null ? Number(cnn.score).toFixed(1) : "--";
+      $("cnnFearGreedState").className = cnnStateClass(cnn.score);
+      $("cnnFearGreedState").textContent = cnn.rating_label || "--";
+      $("cnnFearGreedDot").style.left = Math.max(3, Math.min(97, Number(cnn.score || 50))) + "%";
+      $("cnnFearGreedDate").textContent = cnn.date ? `CNN：${cnn.date}` : "CNN源暂不可用";
+    }
+
     function tempBadgeClass(t) {
       if (t === "极冷" || t === "偏冷") return "cool";
       if (t === "偏热" || t === "过热") return "hot";
@@ -697,41 +723,64 @@
       saveInputsNow();
 
       if (!opts.silent) setLoading(true);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), CALCULATE_TIMEOUT_MS);
-      try {
-        const resp = await fetch(`${API_BASE}/api/calculate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) throw new Error(data.error || "api_error");
-        render(data);
-        if (data.market && data.market.refreshing) {
-          setAutoRefreshStatus("后台更新市场数据中", false);
-          scheduleFollowupStrategyRefresh();
-        } else {
-          pendingMarketRefreshAttempts = 0;
-          setAutoRefreshStatus("自动刷新：" + fmtClock(new Date()), false);
+
+      // Retry up to 2 extra times on cold start / transient errors.
+      // Silent (auto-refresh) calls do not retry to avoid piling up.
+      const MAX_RETRIES = opts.silent ? 0 : 2;
+      let lastError = null;
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), CALCULATE_TIMEOUT_MS);
+        try {
+          const resp = await fetch(`${API_BASE}/api/calculate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.success) throw new Error(data.error || "api_error");
+          render(data);
+          if (data.market && data.market.refreshing) {
+            setAutoRefreshStatus("后台更新市场数据中", false);
+            scheduleFollowupStrategyRefresh();
+          } else {
+            pendingMarketRefreshAttempts = 0;
+            setAutoRefreshStatus("自动刷新：" + fmtClock(new Date()), false);
+          }
+          if (!opts.silent) showToast("策略已刷新");
+          lastError = null;
+          break;
+        } catch (err) {
+          console.error(err);
+          lastError = err;
+          if (attempt < MAX_RETRIES) {
+            setAutoRefreshStatus("服务器预热中，自动重试(" + (attempt + 1) + "/" + MAX_RETRIES + ")…", false);
+            if (!opts.silent) {
+              $("heroEyebrow").textContent = "服务器预热中";
+              $("heroTitle").textContent = "自动重试(" + (attempt + 1) + "/" + MAX_RETRIES + ")…";
+            }
+            await new Promise(function (r) { return setTimeout(r, 5000 * (attempt + 1)); });
+          }
+        } finally {
+          clearTimeout(timeoutId);
         }
-        if (!opts.silent) showToast("策略已刷新");
-      } catch (err) {
-        console.error(err);
+      }
+
+      strategyInFlight = false;
+      if (!opts.silent) setLoading(false);
+
+      if (lastError) {
         if (opts.silent) {
           setAutoRefreshStatus("自动刷新失败，保留上次数据", true);
-        } else if (err.name === "AbortError") {
+        } else if (lastError.name === "AbortError") {
           localFallback("请求超时，请手动点击刷新策略重试。");
           showToast("请求超时，请稍后重试", true);
         } else {
           localFallback("策略获取失败，请稍后重试。");
           showToast("策略获取失败，请稍后重试", true);
         }
-      } finally {
-        clearTimeout(timeoutId);
-        strategyInFlight = false;
-        if (!opts.silent) setLoading(false);
       }
     }
 
@@ -769,7 +818,7 @@
         : hasSourceErrors
         ? "数据源：部分实时源失败，已使用缓存/快照回退"
         : sources.index_quotes
-        ? "数据源：" + [sources.index_quotes, sources.nasdaq_pe, sources.vix, sources.us10y].filter(Boolean).join(" / ")
+        ? "数据源：" + [sources.index_quotes, sources.nasdaq_pe, sources.vix, sources.cnn_fear_greed, sources.us10y].filter(Boolean).join(" / ")
         : "数据源：实时行情 + 本地回退";
 
       const heroes = {
@@ -794,7 +843,9 @@
       const ndxC = m.ndx_close ? m.ndx_close.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "--";
       const spxC = m.spx_close ? m.spx_close.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "--";
       const peText = m.nasdaq_pe ? `，纳指100 PE <b>${Number(m.nasdaq_pe).toFixed(2)}</b>` : "";
-      $("reasonText").innerHTML = `纳指100报 <b>${ndxC}</b>，标普500报 <b>${spxC}</b>${peText}。市场综合评分 <b>${(m.composite || 0).toFixed(1)}/10</b>（${temp}），今日部署率 <b>${ratePct}%</b>。`;
+      const cnn = m.cnn_fear_greed || {};
+      const cnnText = cnn.score != null ? `，CNN情绪 <b>${Number(cnn.score).toFixed(1)}</b>（${cnn.rating_label || "--"}）` : "";
+      $("reasonText").innerHTML = `纳指100报 <b>${ndxC}</b>，标普500报 <b>${spxC}</b>${peText}${cnnText}。市场综合评分 <b>${(m.composite || 0).toFixed(1)}/10</b>（${temp}），今日部署率 <b>${ratePct}%</b>。`;
 
       $("whyAmount").textContent = fmt(plan.total || 0);
       $("formulaBase").textContent = fmt(expl.base_amount || 0);
@@ -862,6 +913,7 @@
       $("vixPrice").textContent = m.vix_close ? m.vix_close.toFixed(2) : "--";
       $("us10yPrice").textContent = m.us10y ? m.us10y.toFixed(3) + "%" : "--";
       $("ndxPe").textContent = m.nasdaq_pe ? Number(m.nasdaq_pe).toFixed(2) : "--";
+      renderCnnFearGreed(cnn);
       $("ndxChange").className = stateClassForChange(ndxChangePct);
       $("spxChange").className = stateClassForChange(spxChangePct);
       $("ndxChange").textContent = signedPct(ndxChangePct);
@@ -1108,33 +1160,55 @@
       if (!hadCachedRows) {
         $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">正在加载基金池...</td></tr>';
       }
-      try {
-        const params = new URLSearchParams();
-        params.set("primary_category", "all");
-        params.set("core_only", "1");
-        if (fundMiniState.tradeMode) params.set("trade_mode", fundMiniState.tradeMode);
-        if (fundMiniState.family) params.set("family", fundMiniState.family);
-        if (forceRefresh) params.set("refresh", "1");
-        const response = await fetch(`${API_BASE}/api/funds?${params.toString()}`);
-        const payload = await response.json();
-        if (!response.ok || !payload.success) throw new Error(payload.error || "fund_mini_failed");
-        fundMiniState.records = payload.records || [];
-        saveFundMiniCache(payload);
-        renderFundMini(fundMiniState.records, payload);
-      } catch (error) {
-        console.error(error);
-        if (!hadCachedRows) {
-          $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">基金池加载失败，请稍后再试。</td></tr>';
-        } else {
-          updateFundMiniCaption({ fromLocalCache: true, fetched_at: "接口暂不可用，已保留本机缓存" });
+      // One retry for first-load cold-start scenarios; skip if cached rows exist
+      const maxAttempts = hadCachedRows ? 1 : 2;
+      let lastErr = null;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const params = new URLSearchParams();
+          params.set("primary_category", "all");
+          params.set("core_only", "1");
+          if (fundMiniState.tradeMode) params.set("trade_mode", fundMiniState.tradeMode);
+          if (fundMiniState.family) params.set("family", fundMiniState.family);
+          if (forceRefresh) params.set("refresh", "1");
+          const response = await fetch(`${API_BASE}/api/funds?${params.toString()}`);
+          const payload = await response.json();
+          if (!response.ok || !payload.success) throw new Error(payload.error || "fund_mini_failed");
+          fundMiniState.records = payload.records || [];
+          saveFundMiniCache(payload);
+          renderFundMini(fundMiniState.records, payload);
+          return;
+        } catch (error) {
+          console.error(error);
+          lastErr = error;
+          if (attempt < maxAttempts - 1 && !hadCachedRows) {
+            await new Promise(function (r) { return setTimeout(r, 4000); });
+          }
         }
+      }
+      if (!hadCachedRows) {
+        $("fundMiniBody").innerHTML = '<tr><td class="fund-mini-empty" colspan="9">基金池加载失败，请稍后再试。</td></tr>';
+      } else {
+        updateFundMiniCaption({ fromLocalCache: true, fetched_at: "接口暂不可用，已保留本机缓存" });
       }
     }
 
     async function autoRefresh() {
       if (document.hidden) return;
       await fetchStrategy({ silent: true, forceRefresh: true });
+      await refreshCnnFearGreed();
       await loadFundMini(false);
+    }
+
+    async function refreshCnnFearGreed() {
+      try {
+        const response = await fetch(`${API_BASE}/api/cnn-fear-greed?refresh=1`);
+        const payload = await response.json();
+        if (!response.ok || !payload.success) throw new Error(payload.error || "cnn_failed");
+        renderCnnFearGreed(payload);
+      } catch (error) {
+        console.warn("CNN fear & greed refresh failed", error);
+      }
     }
 
     function startAutoRefresh() {
@@ -1194,6 +1268,7 @@
     syncBaseRateUi();
     localFallback("正在获取今日建议...");
     fetchStrategy();
+    refreshCnnFearGreed();
     loadFundMini(false);
     startAutoRefresh();
   </script>
