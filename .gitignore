@@ -6,3 +6,8 @@ work/*.headers.txt
 work/*.pretty.json
 work/health.json
 work/index.html
+*.docx
+*.pdf
+*.dxf
+*.csv
+造价成果/

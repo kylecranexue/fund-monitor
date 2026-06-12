@@ -185,6 +185,13 @@ def cache_payload(cache: dict[str, object]) -> dict[str, object] | None:
     return dict(payload) if isinstance(payload, dict) else None
 
 
+def is_startup_market_snapshot(payload: object) -> bool:
+    return isinstance(payload, dict) and str(payload.get("source_mode") or "") in {
+        "startup_snapshot",
+        "local_snapshot",
+    }
+
+
 def load_funds_payload() -> dict[str, object]:
     with FUNDS_FILE.open("r", encoding="utf-8") as fh:
         payload = json.load(fh)
@@ -1140,6 +1147,8 @@ def load_market_snapshot(*, force_refresh: bool = False, prefer_fast: bool = Tru
     if cached is not None:
         payload = dict(cached)
         payload["cache"] = "memory"
+        if is_startup_market_snapshot(payload):
+            payload["refreshing"] = schedule_market_refresh()
         return payload
 
     if prefer_fast:
@@ -1548,6 +1557,8 @@ class NaviHandler(BaseHTTPRequestHandler):
                     "errors": [],
                 }
                 schedule_market_refresh()
+            elif is_startup_market_snapshot(market_snapshot):
+                market_snapshot["refreshing"] = schedule_market_refresh()
             self.send_json(
                 {
                     "status": "ok",
@@ -1667,6 +1678,7 @@ def main() -> None:
     if not cache_get(MARKET_CACHE):
         cache_set(MARKET_CACHE, fallback_market_snapshot(source_mode="startup_snapshot"), MARKET_CACHE_TTL)
         print("Market cache pre-warmed with startup snapshot")
+        schedule_market_refresh()
 
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8787"))
