@@ -9,8 +9,9 @@
 
 当前版本不再只使用静态样本：
 
-- 基金池优先联网同步原站公开 `/api/funds`，失败时回退 `work/funds.json`。
-- 市场温度会实时拉取纳指、标普、VIX、美国 10 年期国债收益率并重新计算；任一实时源失败时会使用缓存或本地快照，并在接口/页面上标明回退状态。
+- 基金池优先联网同步东方财富/Sina 行情与估算数据，失败时回退 `work/funds.json`。
+- 市场温度会实时拉取纳指、标普、VIX、美国 10 年期国债收益率、CNN Fear & Greed、纳指 PE 并重新计算；任一实时源失败时会使用缓存或本地快照，并在接口/页面上标明回退状态。
+- 纳指 PE 免费源来自 World PE Ratio 的 QQQ 估算口径，默认按其历史月度 PE 序列计算近 10 年分位；如有理杏仁/Wind/雪球等专业口径，可用环境变量覆盖。
 - 左侧买入强度会作为默认部署率参与策略计算，联动今日买入金额和纳指/标普分配。
 
 ## 运行
@@ -34,7 +35,14 @@ NAVI_UPSTREAM_BASE=https://www.navi100.top
 FUNDS_CACHE_TTL_SECONDS=900
 MARKET_CACHE_TTL_SECONDS=900
 NAVI_HTTP_TIMEOUT_SECONDS=12
+NASDAQ_PE_TTM=33.33
+NASDAQ_PE_10Y_PERCENTILE=81.5
+NASDAQ_PE_DATE=2026-06-10
+NASDAQ_PE_SOURCE=Professional PE source
+NASDAQ_PE_URL=https://example.com/source
 ```
+
+`NASDAQ_PE_10Y_PERCENTILE` 支持 `81.5` 或 `0.815` 两种写法。配置后，页面会优先展示这组 PE-TTM 与十年分位；不配置时使用免费源估算值。
 
 ## 验证
 

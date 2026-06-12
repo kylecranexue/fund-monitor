@@ -362,9 +362,9 @@
 
       <div class="section-title">
         <h2>市场温度</h2>
-        <a id="dataSourceLink">数据源：Yahoo / Nasdaq / Cboe / FRED</a>
+        <a id="dataSourceLink">数据源：Sina / Cboe / World PE / CNN</a>
       </div>
-      <p class="calc-note market-note">市场温度评分按纳指100 PE估值分位、VIX波动、短中期趋势、10年美债利率加权计算；PE不可用时才回退到指数点位分位。每次手动刷新或自动刷新都会重新联网取数。</p>
+      <p class="calc-note market-note">市场温度评分按纳指100 PE十年分位、VIX波动、短中期趋势、10年美债利率加权计算；当前免费PE源为QQQ估算口径，配置专业源后可覆盖为PE-TTM十年分位。</p>
       <section class="market-strip">
         <div class="strip-item metric-trigger" data-metric-key="ndx" role="button" tabindex="0" aria-controls="marketDetailPanel" aria-expanded="false">
           <svg class="mini-line" viewBox="0 0 96 22"><path d="M0 14 C14 4,22 9,32 5 C46 0,55 8,68 5 C82 4,90 14,96 10" stroke="#d61f45" fill="none" stroke-width="2" stroke-dasharray="3 3"/></svg>
@@ -1011,8 +1011,9 @@
       $("spxChange").textContent = signedPct(spxChangePct);
       $("ndxDate").textContent = fmtDataDate(m.ndx_date, "行情");
       $("spxDate").textContent = fmtDataDate(m.spx_date, "行情");
+      const peYears = Math.round(Number(m.nasdaq_pe_percentile_years || 10));
       $("ndxPeDate").textContent = m.nasdaq_pe
-        ? `${m.nasdaq_pe_date || "--"} · 近5年${Math.round(Number(m.nasdaq_pe_percentile || 0) * 100)}%分位`
+        ? `${m.nasdaq_pe_date || "--"} · 近${peYears}年${Math.round(Number(m.nasdaq_pe_percentile || 0) * 100)}%分位`
         : "PE源暂不可用";
       $("vixChange").className = "state" + (m.vix_close && m.vix_close < 20 ? " green" : "");
       $("vixChange").textContent = m.vix_close ? (m.vix_close < 15 ? "低波动" : m.vix_close < 20 ? "正常" : m.vix_close < 28 ? "偏高" : "恐慌") : "--";
@@ -1022,8 +1023,8 @@
       $("us10yState").textContent = y ? (y >= 4.5 ? "偏高" : y <= 3.5 ? "偏低" : "中性") : "--";
       $("us10yDate").textContent = fmtDataDate(m.us10y_date, "行情");
       const pePct = Number(m.nasdaq_pe_percentile || 0);
-      $("ndxPeState").className = "state" + (!m.nasdaq_pe ? " neutral" : pePct <= 0.35 ? " green" : pePct < 0.75 ? " neutral" : "");
-      $("ndxPeState").textContent = m.nasdaq_pe ? (m.nasdaq_pe_label || (pePct <= 0.35 ? "偏低" : pePct < 0.75 ? "合理" : "偏高")) : "--";
+      $("ndxPeState").className = "state" + (!m.nasdaq_pe ? " neutral" : pePct <= 0.30 ? " green" : pePct < 0.70 ? " neutral" : "");
+      $("ndxPeState").textContent = m.nasdaq_pe ? (m.nasdaq_pe_label || (pePct <= 0.30 ? "偏低" : pePct < 0.70 ? "适中" : "偏高")) : "--";
       $("baseRateText").textContent = baseRatePct.replace(".0", "") + "%";
     }
 

@@ -18,7 +18,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,6 +32,11 @@ NAVI_UPSTREAM_BASE = os.environ.get("NAVI_UPSTREAM_BASE", "https://www.navi100.t
 FUNDS_CACHE_TTL = int(os.environ.get("FUNDS_CACHE_TTL_SECONDS", "900"))
 MARKET_CACHE_TTL = int(os.environ.get("MARKET_CACHE_TTL_SECONDS", "900"))
 HTTP_TIMEOUT = float(os.environ.get("NAVI_HTTP_TIMEOUT_SECONDS", "5"))
+NASDAQ_PE_OVERRIDE = os.environ.get("NASDAQ_PE_TTM")
+NASDAQ_PE_PERCENTILE_OVERRIDE = os.environ.get("NASDAQ_PE_10Y_PERCENTILE")
+NASDAQ_PE_DATE_OVERRIDE = os.environ.get("NASDAQ_PE_DATE")
+NASDAQ_PE_SOURCE_OVERRIDE = os.environ.get("NASDAQ_PE_SOURCE")
+NASDAQ_PE_URL_OVERRIDE = os.environ.get("NASDAQ_PE_URL")
 HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
     "Accept": "application/json,text/plain,*/*",
@@ -70,14 +75,16 @@ MARKET_SNAPSHOT = {
 }
 
 PE_SNAPSHOT = {
-    "nasdaq_pe": 31.49,
-    "nasdaq_pe_date": "09 June 2026",
-    "nasdaq_pe_percentile": 0.8329519450800915,
+    "nasdaq_pe": 31.90,
+    "nasdaq_pe_date": "11 June 2026",
+    "nasdaq_pe_percentile": 0.7603305785123967,
+    "nasdaq_pe_percentile_years": 10,
     "nasdaq_pe_fair_low": 27.31,
     "nasdaq_pe_fair_high": 33.23,
-    "nasdaq_pe_label": "合理",
-    "nasdaq_pe_source": "World PE Ratio cached snapshot",
+    "nasdaq_pe_label": "偏高",
+    "nasdaq_pe_source": "World PE Ratio cached snapshot, QQQ-based estimate",
     "nasdaq_pe_url": "https://worldperatio.com/index/nasdaq-100/",
+    "nasdaq_pe_method": "QQQ ETF估算PE，按页面历史月度PE计算近10年分位；如配置专业数据源则以专业源覆盖。",
 }
 
 CNN_FEAR_GREED_SNAPSHOT = {
@@ -725,7 +732,84 @@ def trailing_return(rows: list[dict[str, float | str]], days: int) -> float:
     return (latest - previous) / previous * 100 if previous else 0.0
 
 
+def pe_label_from_percentile(percentile: float) -> str:
+    if percentile <= 0.30:
+        return "偏低"
+    if percentile >= 0.70:
+        return "偏高"
+    return "适中"
+
+
+def normalize_percentile(value: float) -> float:
+    if value > 1.0:
+        value = value / 100.0
+    return clamp(value, 0.0, 1.0)
+
+
+def parse_world_pe_history(html: str) -> list[dict[str, object]]:
+    match = re.search(r"detailPE_data\s*=\s*\[(.*?)\];", html, re.S)
+    if not match:
+        return []
+    rows: list[dict[str, object]] = []
+    for year, month, day, value in re.findall(
+        r"Date\.UTC\((\d+),\s*(\d+),\s*(\d+)\),([0-9.]+)",
+        match.group(1),
+    ):
+        pe_value = as_float(value, float("nan"))
+        if pe_value != pe_value or pe_value <= 0:
+            continue
+        rows.append(
+            {
+                "date": date(int(year), int(month) + 1, int(day)),
+                "pe": pe_value,
+            }
+        )
+    return rows
+
+
+def pe_percentile_for_years(current_pe: float, history: list[dict[str, object]], years: int) -> tuple[float, int]:
+    if not history:
+        return 0.5, 0
+    latest_date = max(row["date"] for row in history if isinstance(row.get("date"), date))
+    start_date = latest_date.replace(year=latest_date.year - years)
+    values = [
+        as_float(row.get("pe"), float("nan"))
+        for row in history
+        if isinstance(row.get("date"), date) and row["date"] >= start_date
+    ]
+    values = [value for value in values if value == value and value > 0]
+    if not values:
+        return 0.5, 0
+    return percentile_rank(current_pe, values), len(values)
+
+
+def pe_snapshot_from_env() -> dict[str, object] | None:
+    if not NASDAQ_PE_OVERRIDE or not NASDAQ_PE_PERCENTILE_OVERRIDE:
+        return None
+    pe_value = as_float(NASDAQ_PE_OVERRIDE, float("nan"))
+    percentile = normalize_percentile(as_float(NASDAQ_PE_PERCENTILE_OVERRIDE, float("nan")))
+    if pe_value != pe_value or pe_value <= 0 or percentile != percentile:
+        raise ValueError("invalid NASDAQ_PE_TTM or NASDAQ_PE_10Y_PERCENTILE")
+    source = NASDAQ_PE_SOURCE_OVERRIDE or "Configured professional PE source"
+    return {
+        "nasdaq_pe": pe_value,
+        "nasdaq_pe_date": NASDAQ_PE_DATE_OVERRIDE or observed_fetch_time().split(" ")[0],
+        "nasdaq_pe_percentile": percentile,
+        "nasdaq_pe_percentile_years": 10,
+        "nasdaq_pe_fair_low": None,
+        "nasdaq_pe_fair_high": None,
+        "nasdaq_pe_label": pe_label_from_percentile(percentile),
+        "nasdaq_pe_source": source,
+        "nasdaq_pe_url": NASDAQ_PE_URL_OVERRIDE or "",
+        "nasdaq_pe_method": "环境变量覆盖：NASDAQ_PE_TTM + NASDAQ_PE_10Y_PERCENTILE，适合接入理杏仁/Wind/雪球等专业口径。",
+    }
+
+
 def build_nasdaq_pe_snapshot() -> dict[str, object]:
+    env_snapshot = pe_snapshot_from_env()
+    if env_snapshot is not None:
+        return env_snapshot
+
     html = request_text(WORLD_PE_URL, timeout=5, attempts=1)
     current = re.search(
         r"P/E\) Ratio</b> for <b>Nasdaq 100 Index</b> is <b>([0-9.]+)</b>, calculated on <b>([^<]+)</b>",
@@ -744,27 +828,21 @@ def build_nasdaq_pe_snapshot() -> dict[str, object]:
     interval_match = re.search(r"average P/E interval is \[([0-9.]+)\s*,\s*([0-9.]+)\]", html)
     fair_low = as_float(interval_match.group(1), 0.0) if interval_match else 0.0
     fair_high = as_float(interval_match.group(2), 0.0) if interval_match else 0.0
-    history = [
-        as_float(value, float("nan"))
-        for value in re.findall(r'\{"x":([0-9.]+),"y":[^,]+,"name":"[^"]+","range":"5Y"\}', html)
-    ]
-    history = [value for value in history if value == value and value > 0]
-    pe_percentile = percentile_rank(pe_value, history) if history else 0.5
-    if fair_low and pe_value < fair_low:
-        label = "偏低"
-    elif fair_high and pe_value > fair_high:
-        label = "偏高"
-    else:
-        label = "合理"
+    history = parse_world_pe_history(html)
+    pe_percentile, sample_count = pe_percentile_for_years(pe_value, history, 10)
+    label = pe_label_from_percentile(pe_percentile)
     return {
         "nasdaq_pe": pe_value,
         "nasdaq_pe_date": pe_date,
         "nasdaq_pe_percentile": pe_percentile,
+        "nasdaq_pe_percentile_years": 10,
+        "nasdaq_pe_sample_count": sample_count,
         "nasdaq_pe_fair_low": fair_low or None,
         "nasdaq_pe_fair_high": fair_high or None,
         "nasdaq_pe_label": label,
         "nasdaq_pe_source": "World PE Ratio, QQQ-based estimate",
         "nasdaq_pe_url": WORLD_PE_URL,
+        "nasdaq_pe_method": "World PE Ratio 明确说明以 QQQ ETF 估算 Nasdaq 100 PE；分位按页面历史月度PE序列计算近10年排名。",
     }
 
 
@@ -868,6 +946,7 @@ def metric_detail_payload(market: dict[str, object]) -> dict[str, object]:
     cnn = market.get("cnn_fear_greed") if isinstance(market.get("cnn_fear_greed"), dict) else {}
     cnn_components = cnn.get("components") if isinstance(cnn.get("components"), list) else []
     pe_percentile = as_float(market.get("nasdaq_pe_percentile")) * 100
+    pe_years = int(as_float(market.get("nasdaq_pe_percentile_years"), 10))
     cnn_score = as_float(cnn.get("score"), float("nan"))
     return {
         "ndx": {
@@ -898,10 +977,10 @@ def metric_detail_payload(market: dict[str, object]) -> dict[str, object]:
             "date": market.get("nasdaq_pe_date") or "",
             "source": data_sources.get("nasdaq_pe") or market.get("nasdaq_pe_source") or "World PE Ratio",
             "source_url": market.get("nasdaq_pe_url") or WORLD_PE_URL,
-            "formula": "估值分位 = 近5年历史 PE 中低于或等于当前 PE 的样本数 / 总样本数。",
-            "principle": "PE 越高代表市场为纳指100成分股盈利支付的价格越高，估值温度越热；PE 越低则估值压力相对较小。",
+            "formula": f"十年PE分位 = 近{pe_years}年历史PE中低于或等于当前PE的样本数 / 总样本数。",
+            "principle": "PE-TTM越高代表市场为纳指100成分股已实现盈利支付的价格越高，估值温度越热；当前免费源为QQQ估算口径，专业源可通过环境变量覆盖。",
             "value_note": (
-                f"当前 PE {as_float(market.get('nasdaq_pe')):.2f}，近5年约 {pe_percentile:.0f}% 分位，"
+                f"当前 PE {as_float(market.get('nasdaq_pe')):.2f}，近{pe_years}年约 {pe_percentile:.0f}% 分位，"
                 f"当前判断为{market.get('nasdaq_pe_label') or '--'}。"
             ),
             "fallback": "nasdaq_pe" in " ".join(str(item) for item in market.get("errors", [])),
@@ -961,8 +1040,9 @@ def score_plain(name: str, score: float, values: dict[str, float]) -> str:
     if name == "估值位置":
         pct = values.get("valuation_percentile", 0.5) * 100
         pe = values.get("nasdaq_pe", 0)
+        years = int(values.get("nasdaq_pe_percentile_years", 10))
         if pe > 0:
-            return f"纳指100 PE {pe:.2f}，处在近5年约 {pct:.0f}% 分位；PE越高，估值温度越热。"
+            return f"纳指100 PE {pe:.2f}，处在近{years}年约 {pct:.0f}% 分位；PE越高，估值温度越热。"
         if score >= 7:
             return f"主要指数接近近一年高位（约 {pct:.0f}% 分位），买入节奏宜放慢。"
         if score <= 3:
@@ -1027,6 +1107,7 @@ def build_market_payload(
     values = {
         "valuation_percentile": valuation_percentile,
         "nasdaq_pe": as_float(pe_snapshot.get("nasdaq_pe"), 0.0),
+        "nasdaq_pe_percentile_years": as_float(pe_snapshot.get("nasdaq_pe_percentile_years"), 10),
         "vix": vix_close,
         "ret20": ret20,
         "ret60": ret60,
@@ -1054,7 +1135,7 @@ def build_market_payload(
         **pe_snapshot,
         "valuation_percentile": valuation_percentile,
         "valuation_fallback_percentile": price_percentile,
-        "valuation_method": "nasdaq_pe_5y_percentile" if pe_snapshot else "index_price_252d_percentile",
+        "valuation_method": "nasdaq_pe_10y_percentile" if pe_snapshot else "index_price_252d_percentile",
         "composite": composite,
         "temperature": classify_temperature(composite),
         "indicator_details": [
@@ -1391,7 +1472,7 @@ def calculate_strategy(body: dict[str, object]) -> dict[str, object]:
         f"纳指100今日 {ndx_change_pct:+.2f}%，标普500今日 {spx_change_pct:+.2f}%。",
         (
             f"纳指100 PE 为 {as_float(market_snapshot.get('nasdaq_pe')):.2f}，"
-            f"近5年分位约 {as_float(market_snapshot.get('nasdaq_pe_percentile')) * 100:.0f}%。"
+            f"近{int(as_float(market_snapshot.get('nasdaq_pe_percentile_years'), 10))}年分位约 {as_float(market_snapshot.get('nasdaq_pe_percentile')) * 100:.0f}%。"
             if market_snapshot.get("nasdaq_pe")
             else "PE估值源暂不可用，估值位置回退为指数点位分位。"
         ),
@@ -1433,10 +1514,13 @@ def calculate_strategy(body: dict[str, object]) -> dict[str, object]:
             "nasdaq_pe": market_snapshot.get("nasdaq_pe"),
             "nasdaq_pe_date": market_snapshot.get("nasdaq_pe_date"),
             "nasdaq_pe_percentile": market_snapshot.get("nasdaq_pe_percentile"),
+            "nasdaq_pe_percentile_years": market_snapshot.get("nasdaq_pe_percentile_years"),
+            "nasdaq_pe_sample_count": market_snapshot.get("nasdaq_pe_sample_count"),
             "nasdaq_pe_fair_low": market_snapshot.get("nasdaq_pe_fair_low"),
             "nasdaq_pe_fair_high": market_snapshot.get("nasdaq_pe_fair_high"),
             "nasdaq_pe_label": market_snapshot.get("nasdaq_pe_label"),
             "nasdaq_pe_url": market_snapshot.get("nasdaq_pe_url"),
+            "nasdaq_pe_method": market_snapshot.get("nasdaq_pe_method"),
             "cnn_fear_greed": market_snapshot.get("cnn_fear_greed"),
             "valuation_method": market_snapshot.get("valuation_method"),
             "composite": composite,
